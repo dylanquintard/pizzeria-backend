@@ -5,9 +5,14 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const app = express();
+const corsOrigin = process.env.CORS_ORIGIN || "http://localhost:3000";
+const corsOptions = {
+  origin: corsOrigin,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+};
 
 app.use(express.json());
-app.use(cors());
+app.use(cors(corsOptions));
 
 // Routes
 const pizzaRoutes = require("./routes/pizza.routes");
@@ -21,38 +26,35 @@ app.use("/api/timeslots", timeSlotRoutes);
 app.use("/api/users", userRoutes);
 
 app.get("/", (req, res) => {
-  res.send("API Pizzeria running 🚀");
+  res.send("API Pizzeria running");
 });
 
-// ================= SOCKET SETUP =================
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
 
+// Socket setup
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: {
-    origin: "http://localhost:3000", // ton front React
-    methods: ["GET", "POST"],
-  },
+  cors: corsOptions,
 });
 
-// Room pour les admins uniquement
 io.on("connection", (socket) => {
-  console.log("Utilisateur connecté :", socket.id);
+  console.log("User connected:", socket.id);
 
   socket.on("joinAdminRoom", () => {
     socket.join("admins");
-    console.log("Admin rejoint la room admins");
+    console.log("Admin joined admins room");
   });
 
   socket.on("disconnect", () => {
-    console.log("Utilisateur déconnecté :", socket.id);
+    console.log("User disconnected:", socket.id);
   });
 });
 
-// Rendre io accessible ailleurs
+// Make io available in route handlers
 app.set("io", io);
-
-// ================= START SERVER =================
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
