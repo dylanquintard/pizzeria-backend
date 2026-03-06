@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int     @id @default(autoincrement())
+  name      String
+  phone     String
+  email     String  @unique
+  password  String
+  role      Role    @default(CLIENT)
+  orders    Order[]
+}
+
+model Pizza {
+  id          Int    @id @default(autoincrement())
+  name        String
+  description String
+  basePrice   Decimal @db.Decimal(10,2)
+  ingredients PizzaIngredient[]
+  orderItems OrderItem[]
+}
+
+model Ingredient {
+  id       Int       @id @default(autoincrement())
+  name     String
+  price    Decimal @db.Decimal(10,2)
+  isExtra  Boolean   @default(true) // vrai pour suppléments
+  pizzas   PizzaIngredient[]
+}
+
+model PizzaIngredient {
+  id           Int @id @default(autoincrement())
+  pizzaId      Int
+  ingredientId Int
+
+  pizza        Pizza @relation(fields: [pizzaId], references: [id])
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@unique([pizzaId, ingredientId])
+}
+
+model TimeSlot {
+  id            Int      @id @default(autoincrement())
+  startTime     DateTime
+  endTime       DateTime
+  maxPizzas     Int
+  currentPizzas Int      @default(0)
+  active        Boolean  @default(true)
+  serviceDate   DateTime // la date du service, pour ne montrer que les créneaux du jour
+  orders        Order[]
+  
+  @@index([serviceDate])
+}
+
+model Order {
+  id         Int          @id @default(autoincrement())
+  user       User         @relation(fields: [userId], references: [id])
+  userId     Int
+  timeSlot   TimeSlot?     @relation(fields: [timeSlotId], references: [id])
+  timeSlotId Int?
+
+  items      OrderItem[]
+
+  total      Decimal      @db.Decimal(10,2)
+  status     OrderStatus  @default(PENDING)
+  createdAt  DateTime     @default(now())
+
+  @@index([userId])
+  @@index([timeSlotId, status])
+}
+
+model OrderItem {
+  id        Int      @id @default(autoincrement())
+
+  order     Order    @relation(fields: [orderId], references: [id])
+  orderId   Int
+
+  pizza     Pizza    @relation(fields: [pizzaId], references: [id])
+  pizzaId   Int
+
+  quantity  Int
+
+  unitPrice Decimal   @db.Decimal(10,2)
+
+  customizations Json  // ingrédients ajoutés / retirés
+
+  @@index([orderId])
+}
+
+enum OrderStatus {
+  PENDING
+  FINALIZED
+  COMPLETED
+  CANCELED
+}
+
+enum Role {
+  CLIENT
+  ADMIN
+}

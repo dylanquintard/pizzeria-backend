@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "TimeSlot" ALTER COLUMN "serviceDate" DROP DEFAULT,
+ALTER COLUMN "serviceDate" SET DATA TYPE TIMESTAMP(3);
