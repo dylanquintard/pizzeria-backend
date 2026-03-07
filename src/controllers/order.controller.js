@@ -1,15 +1,13 @@
-// src/controllers/order.controller.js
 const orderService = require("../services/order.service");
 
 function getUserId(req) {
   return req.user?.userId || req.user?.id;
 }
 
-// ===== CLIENT =====
 async function getCart(req, res) {
   try {
     const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ error: "Utilisateur non authentifié" });
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
     const cart = await orderService.getCartByUserId(userId);
     res.json(cart);
@@ -22,11 +20,16 @@ async function getCart(req, res) {
 async function addToCart(req, res) {
   try {
     const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ error: "Utilisateur non authentifié" });
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
     const { pizzaId, quantity, customizations } = req.body;
+    const cart = await orderService.addToCart(
+      userId,
+      pizzaId,
+      quantity,
+      customizations
+    );
 
-    const cart = await orderService.addToCart(userId, pizzaId, quantity, customizations);
     res.json(cart);
   } catch (err) {
     console.error("addToCart error:", err);
@@ -37,7 +40,7 @@ async function addToCart(req, res) {
 async function removeItem(req, res) {
   try {
     const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ error: "Utilisateur non authentifié" });
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
     const cart = await orderService.removeItemFromCart(userId, req.params.itemId);
     res.json(cart);
@@ -50,14 +53,13 @@ async function removeItem(req, res) {
 async function finalizeOrder(req, res) {
   try {
     const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ error: "Utilisateur non authentifié" });
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
     const { timeSlotId } = req.body;
-
     const order = await orderService.finalizeOrder(userId, timeSlotId);
 
     const io = req.app.get("io");
-    io.to("admins").emit("orderCompleted", order); // maintenant order.user existe
+    io.to("admins").emit("orderCompleted", order);
 
     res.json(order);
   } catch (err) {
@@ -66,11 +68,12 @@ async function finalizeOrder(req, res) {
   }
 }
 
-// ===== ADMIN =====
 async function getOrdersAdmin(req, res) {
   try {
     const userId = getUserId(req);
-    if (!userId || req.user.role !== "ADMIN") return res.status(401).json({ error: "Accès non autorisé" });
+    if (!userId || req.user.role !== "ADMIN") {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
     const { date, status, filterUserId } = req.query;
     const filters = {};
@@ -89,7 +92,9 @@ async function getOrdersAdmin(req, res) {
 async function deleteOrderAdmin(req, res) {
   try {
     const userId = getUserId(req);
-    if (!userId || req.user.role !== "ADMIN") return res.status(401).json({ error: "Accès non autorisé" });
+    if (!userId || req.user.role !== "ADMIN") {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
     const { orderId } = req.params;
     await orderService.deleteOrder(orderId);
@@ -100,35 +105,27 @@ async function deleteOrderAdmin(req, res) {
   }
 }
 
-
 async function updateOrderStatusAdmin(req, res) {
   try {
-    if (!req.user || req.user.role !== "ADMIN")
-      return res.status(401).json({ error: "Accès non autorisé" });
+    if (!req.user || req.user.role !== "ADMIN") {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
     const { orderId } = req.params;
     const { status } = req.body;
+    const order = await orderService.getOrderById(orderId);
 
-    // --------------------------
-    // Récupérer la commande par ID
-    // --------------------------
-    const order = await orderService.getOrderById(orderId); // On va créer cette fonction côté service
-    if (!order) return res.status(404).json({ error: "Commande introuvable" });
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
 
-    // --------------------------
-    // Vérifie que la commande est COMPLETED avant de passer à FINALIZED
-    // --------------------------
     if (status === "FINALIZED" && order.status !== "COMPLETED") {
       return res.status(400).json({
-        error: "Seules les commandes COMPLETED peuvent être finalisées",
+        error: "Only COMPLETED orders can be finalized",
       });
     }
 
-    // --------------------------
-    // Mettre à jour le status via le service admin
-    // --------------------------
     const updatedOrder = await orderService.updateOrderStatusAdmin(orderId, status);
-
     res.json(updatedOrder);
   } catch (err) {
     console.error("updateOrderStatusAdmin error:", err);
@@ -137,15 +134,11 @@ async function updateOrderStatusAdmin(req, res) {
 }
 
 module.exports = {
-  // ===== CLIENT =====
   getCart,
   addToCart,
   removeItem,
   finalizeOrder,
-
-
-  // ===== ADMIN =====
   getOrdersAdmin,
   deleteOrderAdmin,
-  updateOrderStatusAdmin, // ← nouveau
+  updateOrderStatusAdmin,
 };

@@ -1,69 +1,109 @@
-// src/services/order.service.js
-const { PrismaClient, OrderStatus } = require("@prisma/client");
-const prisma = new PrismaClient();
+const { OrderStatus } = require("@prisma/client");
+const prisma = require("../lib/prisma");
+const { normalizeCustomizations } = require("../utils/customizations");
+const {
+  isSlotReservedStatus,
+  assertAllowedTransition,
+} = require("../utils/order-status");
 
-/* =====================================================
-   ENUM UTILS
-===================================================== */
-const ORDER_STATUS = {
-  PENDING: OrderStatus.PENDING,
-  FINALIZED: OrderStatus.FINALIZED,
-  COMPLETED: OrderStatus.COMPLETED,
-  CANCELED: OrderStatus.CANCELED,
+const ORDER_INCLUDE = {
+  items: { include: { pizza: { include: { category: true } } } },
+  timeSlot: { include: { location: true } },
+  user: { select: { id: true, name: true } },
 };
 
-/* =====================================================
-   UTILS
-===================================================== */
-// Recalculer le total du panier
-async function recalculateTotal(orderId) {
-  const items = await prisma.orderItem.findMany({ where: { orderId } });
-  const total = items.reduce((acc, item) => acc + Number(item.unitPrice) * item.quantity, 0);
+function parsePositiveInt(value, fieldName) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${fieldName} must be a positive integer`);
+  }
+  return parsed;
+}
 
-  await prisma.order.update({ where: { id: orderId }, data: { total } });
+function parseStatus(status) {
+  const normalized = String(status || "").trim().toUpperCase();
+  if (!OrderStatus[normalized]) {
+    throw new Error(`Invalid status: ${status}`);
+  }
+  return OrderStatus[normalized];
+}
+
+function getOrderPizzasCount(order) {
+  return order.items.reduce((sum, item) => sum + item.quantity, 0);
+}
+
+async function recalculateTotal(client, orderId) {
+  const items = await client.orderItem.findMany({
+    where: { orderId },
+    select: { quantity: true, unitPrice: true },
+  });
+
+  const total = items.reduce(
+    (acc, item) => acc + Number(item.unitPrice) * item.quantity,
+    0
+  );
+
+  await client.order.update({ where: { id: orderId }, data: { total } });
   return total;
 }
 
-// Formatter le panier pour le frontend (avec objets complets pour ingrédients)
-async function formatCart(order) {
+async function buildIngredientMapFromOrders(orders) {
+  const ingredientIds = new Set();
+
+  for (const order of orders) {
+    for (const item of order.items) {
+      const custom = normalizeCustomizations(item.customizations || {});
+      for (const id of custom.addedIngredients) ingredientIds.add(id);
+      for (const id of custom.removedIngredients) ingredientIds.add(id);
+    }
+  }
+
+  if (ingredientIds.size === 0) return new Map();
+
+  const ingredients = await prisma.ingredient.findMany({
+    where: { id: { in: [...ingredientIds] } },
+    select: { id: true, name: true, price: true },
+  });
+
+  return new Map(ingredients.map((ingredient) => [ingredient.id, ingredient]));
+}
+
+function formatOrderWithIngredientMap(order, ingredientMap) {
   if (!order) return { items: [] };
 
-  const formattedItems = await Promise.all(
-    order.items.map(async (item) => {
-      const custom = item.customizations || {};
-      const addedIds = custom.addedIngredients || [];
-      const removedIds = custom.removedIngredients || [];
+  const items = order.items.map((item) => {
+    const custom = normalizeCustomizations(item.customizations || {});
 
-      const addedIngredients =
-        addedIds.length > 0
-          ? await prisma.ingredient.findMany({
-              where: { id: { in: addedIds } },
-              select: { id: true, name: true, price: true },
-            })
-          : [];
+    const addedIngredients = custom.addedIngredients
+      .map((id) => ingredientMap.get(id))
+      .filter(Boolean)
+      .map((ingredient) => ({
+        id: ingredient.id,
+        name: ingredient.name,
+        price: Number(ingredient.price),
+      }));
 
-      const removedIngredients =
-        removedIds.length > 0
-          ? await prisma.ingredient.findMany({
-              where: { id: { in: removedIds } },
-              select: { id: true, name: true },
-            })
-          : [];
+    const removedIngredients = custom.removedIngredients
+      .map((id) => ingredientMap.get(id))
+      .filter(Boolean)
+      .map((ingredient) => ({ id: ingredient.id, name: ingredient.name }));
 
-      return {
-        id: item.id,
-        pizza: {
-          id: item.pizza.id,
-          name: item.pizza.name,
-          basePrice: Number(item.pizza.basePrice),
-        },
-        quantity: item.quantity,
-        unitPrice: Number(item.unitPrice),
-        addedIngredients,
-        removedIngredients,
-      };
-    })
-  );
+    return {
+      id: item.id,
+      pizza: {
+        id: item.pizza.id,
+        name: item.pizza.name,
+        basePrice: Number(item.pizza.basePrice),
+        category: item.pizza.category
+          ? { id: item.pizza.category.id, name: item.pizza.category.name }
+          : null,
+      },
+      quantity: item.quantity,
+      unitPrice: Number(item.unitPrice),
+      addedIngredients,
+      removedIngredients,
+    };
+  });
 
   return {
     id: order.id,
@@ -72,274 +112,371 @@ async function formatCart(order) {
     createdAt: order.createdAt,
     timeSlot: order.timeSlot || null,
     user: order.user ? { id: order.user.id, name: order.user.name } : null,
-    items: formattedItems,
+    items,
   };
 }
 
-/* =====================================================
-   CLIENT
-===================================================== */
-async function getCartByUserId(userId) {
-  userId = Number(userId);
-  const cart = await prisma.order.findFirst({
-    where: { userId, status: ORDER_STATUS.PENDING },
-    include: { items: { include: { pizza: true } }, timeSlot: true },
-    orderBy: { createdAt: "asc" },
+async function formatSingleOrder(order) {
+  if (!order) return { items: [] };
+  const ingredientMap = await buildIngredientMapFromOrders([order]);
+  return formatOrderWithIngredientMap(order, ingredientMap);
+}
+
+async function formatOrderCollection(orders) {
+  if (!orders || orders.length === 0) return [];
+  const ingredientMap = await buildIngredientMapFromOrders(orders);
+  return orders.map((order) => formatOrderWithIngredientMap(order, ingredientMap));
+}
+
+async function findOrCreatePendingCart(tx, userId) {
+  const existingCart = await tx.order.findFirst({
+    where: { userId, status: OrderStatus.PENDING },
+    orderBy: { createdAt: "desc" },
   });
-  return formatCart(cart);
+
+  if (existingCart) return existingCart;
+
+  try {
+    return await tx.order.create({
+      data: {
+        status: OrderStatus.PENDING,
+        total: 0,
+        userId,
+      },
+    });
+  } catch (err) {
+    if (err.code === "P2002") {
+      const cart = await tx.order.findFirst({
+        where: { userId, status: OrderStatus.PENDING },
+        orderBy: { createdAt: "desc" },
+      });
+      if (cart) return cart;
+    }
+    throw err;
+  }
+}
+
+async function reserveSlotCapacity(
+  tx,
+  timeSlotId,
+  pizzasToReserve,
+  { enforceStartBuffer = false } = {}
+) {
+  const slot = await tx.timeSlot.findUnique({ where: { id: timeSlotId } });
+
+  if (!slot || !slot.active) {
+    throw new Error("Invalid time slot");
+  }
+
+  if (enforceStartBuffer) {
+    const minStart = new Date(Date.now() + 15 * 60_000);
+    if (new Date(slot.startTime) < minStart) {
+      throw new Error("Selected time slot is too soon");
+    }
+  }
+
+  if (slot.maxPizzas < pizzasToReserve) {
+    throw new Error("Time slot full");
+  }
+
+  const result = await tx.timeSlot.updateMany({
+    where: {
+      id: timeSlotId,
+      active: true,
+      currentPizzas: {
+        lte: slot.maxPizzas - pizzasToReserve,
+      },
+    },
+    data: {
+      currentPizzas: {
+        increment: pizzasToReserve,
+      },
+    },
+  });
+
+  if (result.count !== 1) {
+    throw new Error("Time slot full");
+  }
+}
+
+async function releaseSlotCapacity(tx, timeSlotId, pizzasToRelease) {
+  const slot = await tx.timeSlot.findUnique({ where: { id: timeSlotId } });
+  if (!slot) return;
+
+  const nextCount = Math.max(0, slot.currentPizzas - pizzasToRelease);
+  await tx.timeSlot.update({
+    where: { id: timeSlotId },
+    data: { currentPizzas: nextCount },
+  });
+}
+
+async function getCartByUserId(userId) {
+  const parsedUserId = parsePositiveInt(userId, "userId");
+
+  const cart = await prisma.order.findFirst({
+    where: { userId: parsedUserId, status: OrderStatus.PENDING },
+    include: ORDER_INCLUDE,
+    orderBy: { createdAt: "desc" },
+  });
+
+  return formatSingleOrder(cart);
 }
 
 async function addToCart(userId, pizzaId, quantity, customizations = {}) {
-  userId = Number(userId);
-  pizzaId = Number(pizzaId);
-  quantity = Number(quantity);
+  const parsedUserId = parsePositiveInt(userId, "userId");
+  const parsedPizzaId = parsePositiveInt(pizzaId, "pizzaId");
+  const parsedQuantity = parsePositiveInt(quantity, "quantity");
+  const normalizedCustomizations = normalizeCustomizations(customizations);
 
-  if (!Number.isInteger(userId) || !Number.isInteger(pizzaId) || quantity <= 0)
-    throw new Error("Données invalides");
+  const updatedOrder = await prisma.$transaction(async (tx) => {
+    const pizza = await tx.pizza.findUnique({ where: { id: parsedPizzaId } });
+    if (!pizza) throw new Error("Pizza not found");
 
-  const { addedIngredients = [], removedIngredients = [] } = customizations;
+    const cart = await findOrCreatePendingCart(tx, parsedUserId);
 
-  const addedIds = [...new Set(addedIngredients.map(Number))].filter(Boolean);
-  const removedIds = [...new Set(removedIngredients.map(Number))].filter(Boolean);
+    let extrasTotal = 0;
+    if (normalizedCustomizations.addedIngredients.length > 0) {
+      const extras = await tx.ingredient.findMany({
+        where: {
+          id: { in: normalizedCustomizations.addedIngredients },
+          isExtra: true,
+        },
+      });
 
-  const pizza = await prisma.pizza.findUnique({
-    where: { id: pizzaId },
-    include: { ingredients: true },
-  });
-  if (!pizza) throw new Error("Pizza introuvable");
+      if (extras.length !== normalizedCustomizations.addedIngredients.length) {
+        throw new Error("Invalid extra ingredient");
+      }
 
-  let cart = await prisma.order.findFirst({ where: { userId, status: ORDER_STATUS.PENDING } });
-  if (!cart) {
-    cart = await prisma.order.create({
-      data: {
-        status: ORDER_STATUS.PENDING,
-        total: 0,
-        user: { connect: { id: userId } },
+      extrasTotal = extras.reduce((sum, ingredient) => sum + Number(ingredient.price), 0);
+    }
+
+    const unitPrice = Number(pizza.basePrice) + extrasTotal;
+
+    const existingItem = await tx.orderItem.findFirst({
+      where: {
+        orderId: cart.id,
+        pizzaId: parsedPizzaId,
+        customizations: {
+          equals: normalizedCustomizations,
+        },
       },
     });
-  }
 
-  let extrasTotal = 0;
-  if (addedIds.length > 0) {
-    const extras = await prisma.ingredient.findMany({
-      where: { id: { in: addedIds }, isExtra: true },
+    if (existingItem) {
+      await tx.orderItem.update({
+        where: { id: existingItem.id },
+        data: { quantity: existingItem.quantity + parsedQuantity },
+      });
+    } else {
+      await tx.orderItem.create({
+        data: {
+          orderId: cart.id,
+          pizzaId: parsedPizzaId,
+          quantity: parsedQuantity,
+          unitPrice,
+          customizations: normalizedCustomizations,
+        },
+      });
+    }
+
+    await recalculateTotal(tx, cart.id);
+
+    return tx.order.findUnique({
+      where: { id: cart.id },
+      include: ORDER_INCLUDE,
     });
-    if (extras.length !== addedIds.length) throw new Error("Supplément invalide");
-    extrasTotal = extras.reduce((sum, ing) => sum + Number(ing.price), 0);
-  }
-
-  const unitPrice = Number(pizza.basePrice) + extrasTotal;
-
-// Cherche si un item identique existe déjà dans le panier
-const existingItem = await prisma.orderItem.findFirst({
-  where: {
-    orderId: cart.id,
-    pizzaId,
-    customizations: {
-      equals: { addedIngredients: addedIds, removedIngredients: removedIds },
-    },
-  },
-});
-
-if (existingItem) {
-  // Si oui, on incrémente la quantité
-  await prisma.orderItem.update({
-    where: { id: existingItem.id },
-    data: { quantity: existingItem.quantity + quantity },
-  });
-} else {
-  // Sinon, on crée un nouvel item
-  await prisma.orderItem.create({
-    data: {
-      orderId: cart.id,
-      pizzaId,
-      quantity,
-      unitPrice,
-      customizations: { addedIngredients: addedIds, removedIngredients: removedIds },
-    },
-  });
-}
-
-  await recalculateTotal(cart.id);
-
-  const updated = await prisma.order.findUnique({
-    where: { id: cart.id },
-    include: { items: { include: { pizza: true } }, timeSlot: true },
   });
 
-  return formatCart(updated);
+  return formatSingleOrder(updatedOrder);
 }
 
 async function removeItemFromCart(userId, itemId) {
-  userId = Number(userId);
-  itemId = Number(itemId);
+  const parsedUserId = parsePositiveInt(userId, "userId");
+  const parsedItemId = parsePositiveInt(itemId, "itemId");
 
-  const cart = await prisma.order.findFirst({
-    where: { userId, status: ORDER_STATUS.PENDING },
-    include: { items: true },
+  const updatedOrder = await prisma.$transaction(async (tx) => {
+    const cart = await tx.order.findFirst({
+      where: { userId: parsedUserId, status: OrderStatus.PENDING },
+      include: { items: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!cart) throw new Error("Cart not found");
+
+    const item = cart.items.find((entry) => entry.id === parsedItemId);
+    if (!item) throw new Error("Item not found");
+
+    await tx.orderItem.delete({ where: { id: parsedItemId } });
+    await recalculateTotal(tx, cart.id);
+
+    return tx.order.findUnique({
+      where: { id: cart.id },
+      include: ORDER_INCLUDE,
+    });
   });
-  if (!cart) throw new Error("Panier introuvable");
 
-  const item = cart.items.find((i) => i.id === itemId);
-  if (!item) throw new Error("Item introuvable");
-
-  await prisma.orderItem.delete({ where: { id: itemId } });
-  await recalculateTotal(cart.id);
-
-  const updated = await prisma.order.findUnique({
-    where: { id: cart.id },
-    include: { items: { include: { pizza: true } }, timeSlot: true },
-  });
-  return formatCart(updated);
+  return formatSingleOrder(updatedOrder);
 }
 
 async function finalizeOrder(userId, timeSlotId) {
-  userId = Number(userId);
-  timeSlotId = Number(timeSlotId);
+  const parsedUserId = parsePositiveInt(userId, "userId");
+  const parsedTimeSlotId = parsePositiveInt(timeSlotId, "timeSlotId");
 
-  const cart = await prisma.order.findFirst({
-    where: { userId, status: OrderStatus.PENDING },
-    include: { items: true },
-  });
-  if (!cart || cart.items.length === 0) throw new Error("Panier vide");
+  const finalizedOrder = await prisma.$transaction(async (tx) => {
+    const cart = await tx.order.findFirst({
+      where: { userId: parsedUserId, status: OrderStatus.PENDING },
+      include: { items: true },
+      orderBy: { createdAt: "desc" },
+    });
 
-  const totalPizzas = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+    if (!cart || cart.items.length === 0) {
+      throw new Error("Cart is empty");
+    }
 
-  const slot = await prisma.timeSlot.findUnique({ where: { id: timeSlotId } });
-  if (!slot || !slot.active) throw new Error("Créneau invalide");
-  if (slot.currentPizzas + totalPizzas > slot.maxPizzas) throw new Error("Créneau complet");
+    const totalPizzas = getOrderPizzasCount(cart);
 
-  await prisma.$transaction([
-    prisma.order.update({
+    await reserveSlotCapacity(tx, parsedTimeSlotId, totalPizzas, {
+      enforceStartBuffer: true,
+    });
+
+    await tx.order.update({
       where: { id: cart.id },
-      data: { status: OrderStatus.COMPLETED, timeSlot: { connect: { id: timeSlotId } } },
-    }),
-    prisma.timeSlot.update({
-      where: { id: timeSlotId },
-      data: { currentPizzas: { increment: totalPizzas } },
-    }),
-  ]);
+      data: {
+        status: OrderStatus.COMPLETED,
+        timeSlotId: parsedTimeSlotId,
+      },
+    });
 
-const finalized = await prisma.order.findUnique({
-  where: { id: cart.id },
-  include: {
-    items: { include: { pizza: true } },
-    timeSlot: true,
-    user: { select: { id: true, name: true } }, // ← ajouté
-  },
-});
+    return tx.order.findUnique({
+      where: { id: cart.id },
+      include: ORDER_INCLUDE,
+    });
+  });
 
-return formatCart(finalized);
-
-  return formatCart(finalized);
+  return formatSingleOrder(finalizedOrder);
 }
 
-/* =====================================================
-   ADMIN FUNCTIONS
-===================================================== */
-
-// Récupérer toutes les commandes pour une date donnée avec filtres
 async function getOrdersAdmin(filters = {}) {
-  const { userId, status, date } = filters;
   const where = {};
 
-  if (userId) where.userId = Number(userId);
-  if (status) {
-    const normalizedStatus = status.trim().toUpperCase();
-    if (!OrderStatus[normalizedStatus]) throw new Error(`Statut invalide : ${status}`);
-    where.status = OrderStatus[normalizedStatus];
+  if (filters.userId) {
+    where.userId = parsePositiveInt(filters.userId, "userId");
   }
-  if (date) {
-    const startOfDay = new Date(date);
+
+  if (filters.status) {
+    where.status = parseStatus(filters.status);
+  }
+
+  if (filters.date) {
+    const startOfDay = new Date(filters.date);
+    if (Number.isNaN(startOfDay.getTime())) {
+      throw new Error("Invalid date");
+    }
     startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
+
+    const endOfDay = new Date(startOfDay);
     endOfDay.setHours(23, 59, 59, 999);
+
     where.createdAt = { gte: startOfDay, lte: endOfDay };
   }
 
   const orders = await prisma.order.findMany({
     where,
-    include: {
-      user: { select: { id: true, name: true } },
-      items: { include: { pizza: true } },
-      timeSlot: true,
-    },
-    orderBy: [
-      { timeSlot: { startTime: "asc" } },
-      { createdAt: "asc" },
-    ],
+    include: ORDER_INCLUDE,
+    orderBy: [{ createdAt: "desc" }],
   });
 
-  return Promise.all(orders.map(formatCart));
+  return formatOrderCollection(orders);
 }
 
-// Récupérer une commande par ID (nouveau)
 async function getOrderById(orderId) {
-  orderId = Number(orderId);
-  if (!orderId) throw new Error("orderId manquant");
+  const parsedOrderId = parsePositiveInt(orderId, "orderId");
 
   const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: { items: { include: { pizza: true } }, timeSlot: true, user: true },
+    where: { id: parsedOrderId },
+    include: ORDER_INCLUDE,
   });
 
-  return formatCart(order);
+  if (!order) return null;
+  return formatSingleOrder(order);
 }
 
-// Supprimer une commande
 async function deleteOrder(orderId) {
-  orderId = Number(orderId);
-  if (!orderId) throw new Error("orderId manquant");
+  const parsedOrderId = parsePositiveInt(orderId, "orderId");
 
-  const order = await prisma.order.findUnique({ where: { id: orderId }, include: { items: true } });
-  if (!order) throw new Error("Commande introuvable");
+  await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { id: parsedOrderId },
+      include: { items: true },
+    });
 
-  const totalPizzas = order.items?.reduce((sum, item) => sum + item.quantity, 0) || 0;
+    if (!order) throw new Error("Order not found");
 
-  const actions = [
-    prisma.orderItem.deleteMany({ where: { orderId } }),
-    prisma.order.delete({ where: { id: orderId } }),
-  ];
+    const pizzasCount = getOrderPizzasCount(order);
 
-  if (order.status === OrderStatus.COMPLETED && order.timeSlotId) {
-    actions.push(prisma.timeSlot.update({
-      where: { id: order.timeSlotId },
-      data: { currentPizzas: { decrement: totalPizzas } },
-    }));
-  }
+    if (order.timeSlotId && isSlotReservedStatus(order.status)) {
+      await releaseSlotCapacity(tx, order.timeSlotId, pizzasCount);
+    }
 
-  await prisma.$transaction(actions);
+    await tx.orderItem.deleteMany({ where: { orderId: parsedOrderId } });
+    await tx.order.delete({ where: { id: parsedOrderId } });
+  });
+
   return true;
 }
 
-// Changer le status d'une commande
 async function updateOrderStatusAdmin(orderId, status) {
-  orderId = Number(orderId);
-  if (!orderId) throw new Error("orderId manquant");
-  if (!status) throw new Error("status manquant");
+  const parsedOrderId = parsePositiveInt(orderId, "orderId");
+  const nextStatus = parseStatus(status);
 
-  const normalizedStatus = status.trim().toUpperCase();
-  if (!OrderStatus[normalizedStatus]) throw new Error(`Statut invalide : ${status}`);
+  const updatedOrder = await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { id: parsedOrderId },
+      include: { items: true, timeSlot: true, user: { select: { id: true, name: true } } },
+    });
 
-  const updatedOrder = await prisma.order.update({
-    where: { id: orderId },
-    data: { status: OrderStatus[normalizedStatus] },
-    include: { items: { include: { pizza: true } }, timeSlot: true, user: true },
+    if (!order) throw new Error("Order not found");
+
+    assertAllowedTransition(order.status, nextStatus);
+
+    if (order.status === nextStatus) {
+      return tx.order.findUnique({ where: { id: parsedOrderId }, include: ORDER_INCLUDE });
+    }
+
+    const pizzasCount = getOrderPizzasCount(order);
+    const wasReserved = isSlotReservedStatus(order.status);
+    const willReserve = isSlotReservedStatus(nextStatus);
+
+    if (willReserve && !order.timeSlotId) {
+      throw new Error("Order has no timeslot to reserve");
+    }
+
+    if (!wasReserved && willReserve) {
+      await reserveSlotCapacity(tx, order.timeSlotId, pizzasCount);
+    }
+
+    if (wasReserved && !willReserve) {
+      await releaseSlotCapacity(tx, order.timeSlotId, pizzasCount);
+    }
+
+    await tx.order.update({
+      where: { id: parsedOrderId },
+      data: { status: nextStatus },
+    });
+
+    return tx.order.findUnique({ where: { id: parsedOrderId }, include: ORDER_INCLUDE });
   });
 
-  return formatCart(updatedOrder);
+  return formatSingleOrder(updatedOrder);
 }
 
 module.exports = {
-  // ==================== CLIENT ====================
   getCartByUserId,
   addToCart,
   removeItemFromCart,
   finalizeOrder,
-
-  // ==================== ADMIN =====================
   getOrdersAdmin,
-  getOrderById,            // ← ajouté
+  getOrderById,
   updateOrderStatusAdmin,
   deleteOrder,
 };

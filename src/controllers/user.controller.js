@@ -1,77 +1,99 @@
 const userService = require("../services/user.service");
 
-// Inscription
+function sendError(res, err, defaultStatus = 400) {
+  const status = Number(err?.status) || defaultStatus;
+  const payload = {
+    error: err?.message || "Unexpected error",
+  };
+
+  if (err?.code) payload.code = err.code;
+  if (err?.details && typeof err.details === "object") {
+    Object.assign(payload, err.details);
+  }
+
+  return res.status(status).json(payload);
+}
+
 async function register(req, res) {
   try {
     const { name, email, phone, password } = req.body;
-    const { user, token } = await userService.createUser({ name, email, phone, password });
-    res.status(201).json({ user, token });
+    const result = await userService.createUser({
+      name,
+      email,
+      phone,
+      password,
+    });
+    res.status(201).json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 }
 
-// Connexion
 async function login(req, res) {
   try {
     const { email, password } = req.body;
     const { user, token } = await userService.loginUser({ email, password });
     res.json({ user, token });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    sendError(res, err);
   }
 }
 
-// Déconnexion (optionnel côté backend, juste retour 200)
-async function logout(req, res) {
-  res.json({ message: "Déconnexion réussie" });
+async function startVerification(req, res) {
+  try {
+    const { email } = req.body;
+    const result = await userService.startVerification({ email });
+    res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
 }
 
-// Récupérer les commandes de l'utilisateur connecté
+async function confirmVerification(req, res) {
+  try {
+    const { email, emailCode } = req.body;
+    const result = await userService.confirmVerification({ email, emailCode });
+    res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+}
+
+async function logout(_req, res) {
+  res.json({ message: "Logout successful" });
+}
+
 async function getUserOrders(req, res) {
   try {
-    const userId = req.user.userId; // via authMiddleware
+    const userId = req.user.userId;
     const orders = await userService.getOrdersByUserId(userId);
     res.status(200).json(orders);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: err.message || "Erreur serveur" });
+    res.status(500).json({ error: err.message || "Server error" });
   }
 }
 
-// Récupérer profil
 async function me(req, res) {
   try {
     const user = await userService.getMe(req.user.userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
     res.json(user);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 }
 
-// Mettre à jour profil
-
-
 async function updateMe(req, res) {
   try {
-    const userId = req.user.userId; // Assure-toi que authMiddleware définit bien req.user.id
-    const body = req.body;
-
-    const updatedUser = await userService.updateMe(userId, body);
-
-    // Ne renvoie pas le mot de passe
-    const { password, ...userSafe } = updatedUser;
-
-    res.status(200).json(userSafe);
+    const userId = req.user.userId;
+    const updatedUser = await userService.updateMe(userId, req.body);
+    res.status(200).json(updatedUser);
   } catch (err) {
-    console.error("Erreur UPDATE ME :", err);
     res.status(400).json({ error: err.message });
   }
 }
 
-
-// Admin
-async function getAllUsers(req, res) {
+async function getAllUsers(_req, res) {
   try {
     const users = await userService.getAllUsers();
     res.json(users);
@@ -83,7 +105,7 @@ async function getAllUsers(req, res) {
 async function getUserById(req, res) {
   try {
     const user = await userService.getUserById(req.params.id);
-    if (!user) return res.status(404).json({ error: "Utilisateur introuvable" });
+    if (!user) return res.status(404).json({ error: "User not found" });
     res.json(user);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -102,17 +124,18 @@ async function adminUpdateUserRole(req, res) {
 
 async function adminDeleteUser(req, res) {
   try {
-    await userService.deleteUser(req.params.id);
-    res.json({ message: "Utilisateur supprimé" });
+    const deletedUser = await userService.deleteUser(req.params.id);
+    res.json({ message: "User deleted", user: deletedUser });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 }
 
-
 module.exports = {
   register,
   login,
+  startVerification,
+  confirmVerification,
   logout,
   getUserOrders,
   me,

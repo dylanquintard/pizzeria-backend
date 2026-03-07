@@ -2,61 +2,94 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
+const jwt = require("jsonwebtoken");
 const { Server } = require("socket.io");
+const { CORS_ORIGINS, JWT_SECRET, PORT } = require("./lib/env");
 
 const app = express();
-const corsOrigin = process.env.CORS_ORIGIN || "http://localhost:3000";
+const normalizeOrigin = (origin) => String(origin || "").trim().replace(/\/+$/, "");
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  return CORS_ORIGINS.includes(normalizeOrigin(origin));
+};
+
 const corsOptions = {
-  origin: corsOrigin,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  origin(origin, callback) {
+    if (isAllowedOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("Origin not allowed by CORS"));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  credentials: true,
 };
 
 app.use(express.json());
 app.use(cors(corsOptions));
 
-// Routes
 const pizzaRoutes = require("./routes/pizza.routes");
 const orderRoutes = require("./routes/order.routes");
 const timeSlotRoutes = require("./routes/timeslot.routes");
 const userRoutes = require("./routes/user.routes");
+const categoryRoutes = require("./routes/category.routes");
+const locationRoutes = require("./routes/location.routes");
+const galleryRoutes = require("./routes/gallery.routes");
+const messageRoutes = require("./routes/message.routes");
 
 app.use("/api/pizzas", pizzaRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/timeslots", timeSlotRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/categories", categoryRoutes);
+app.use("/api/locations", locationRoutes);
+app.use("/api/gallery", galleryRoutes);
+app.use("/api/messages", messageRoutes);
 
-app.get("/", (req, res) => {
+app.get("/", (_req, res) => {
   res.send("API Pizzeria running");
 });
 
-app.get("/health", (req, res) => {
-  res.status(200).json({ status: "ok" });
-});
-
-// Socket setup
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: corsOptions,
+  cors: {
+    origin: CORS_ORIGINS,
+    methods: ["GET", "POST"],
+  },
 });
 
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  socket.on("joinAdminRoom", (payload = {}, ack = () => {}) => {
+    const token =
+      typeof payload === "string"
+        ? payload
+        : typeof payload.token === "string"
+          ? payload.token
+          : null;
 
-  socket.on("joinAdminRoom", () => {
-    socket.join("admins");
-    console.log("Admin joined admins room");
-  });
+    if (!token) {
+      ack({ ok: false, error: "Token missing" });
+      return;
+    }
 
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded.role !== "ADMIN") {
+        ack({ ok: false, error: "Admin role required" });
+        return;
+      }
+
+      socket.join("admins");
+      ack({ ok: true });
+    } catch (_err) {
+      ack({ ok: false, error: "Invalid token" });
+    }
   });
 });
 
-// Make io available in route handlers
 app.set("io", io);
 
-const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Server + Socket running on port ${PORT}`);
+  console.log(`Server and Socket running on port ${PORT}`);
 });

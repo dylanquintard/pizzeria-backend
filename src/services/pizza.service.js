@@ -1,198 +1,192 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma");
 
-/* =========================
-   PIZZAS
-========================= */
+function parsePositiveInt(value, fieldName) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${fieldName} must be a positive integer`);
+  }
+  return parsed;
+}
 
-async function getAllPizzas() {
+function parseNullablePositiveInt(value, fieldName) {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  return parsePositiveInt(value, fieldName);
+}
+
+function parseDecimal(value, fieldName) {
+  const parsed = Number(value);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`${fieldName} must be a valid positive number`);
+  }
+  return parsed;
+}
+
+async function getAllPizzas(filters = {}) {
+  const categoryId = parseNullablePositiveInt(filters.categoryId, "categoryId");
+
   return prisma.pizza.findMany({
+    where: {
+      categoryId: categoryId === undefined ? undefined : categoryId,
+    },
     include: {
+      category: true,
       ingredients: {
-        include: {
-          ingredient: true,
-        },
+        include: { ingredient: true },
       },
     },
-    orderBy: { name: "asc" },
+    orderBy: [{ categoryId: "asc" }, { name: "asc" }],
   });
 }
 
 async function getPizzaById(id) {
-  id = parseInt(id);
+  const pizzaId = parsePositiveInt(id, "id");
 
   const pizza = await prisma.pizza.findUnique({
-    where: { id },
+    where: { id: pizzaId },
     include: {
+      category: true,
       ingredients: {
-        include: {
-          ingredient: true,
-        },
+        include: { ingredient: true },
       },
     },
   });
 
-  if (!pizza) throw new Error("Pizza introuvable");
-
+  if (!pizza) throw new Error("Pizza not found");
   return pizza;
 }
 
 async function createPizza(data) {
-  const { name, description, basePrice } = data;
+  const name = typeof data.name === "string" ? data.name.trim() : "";
+  if (!name) throw new Error("name is required");
+  const categoryId = parseNullablePositiveInt(data.categoryId, "categoryId");
 
-  if (!name || !basePrice) {
-    throw new Error("Nom et prix obligatoires");
+  if (categoryId) {
+    const category = await prisma.category.findUnique({ where: { id: categoryId } });
+    if (!category) throw new Error("Category not found");
   }
 
   return prisma.pizza.create({
     data: {
       name,
-      description,
-      basePrice: Number(basePrice),
+      description: typeof data.description === "string" ? data.description.trim() : "",
+      basePrice: parseDecimal(data.basePrice, "basePrice"),
+      categoryId,
     },
+    include: { category: true },
   });
 }
 
 async function updatePizza(id, data) {
-  id = parseInt(id);
+  const pizzaId = parsePositiveInt(id, "id");
+  const existing = await prisma.pizza.findUnique({ where: { id: pizzaId } });
+  if (!existing) throw new Error("Pizza not found");
+  const categoryId = parseNullablePositiveInt(data.categoryId, "categoryId");
 
-  const pizza = await prisma.pizza.findUnique({ where: { id } });
-  if (!pizza) throw new Error("Pizza introuvable");
+  if (categoryId) {
+    const category = await prisma.category.findUnique({ where: { id: categoryId } });
+    if (!category) throw new Error("Category not found");
+  }
 
   return prisma.pizza.update({
-    where: { id },
+    where: { id: pizzaId },
     data: {
-      name: data.name ?? pizza.name,
-      description: data.description ?? pizza.description,
-      basePrice: data.basePrice
-        ? Number(data.basePrice)
-        : pizza.basePrice,
+      name: typeof data.name === "string" ? data.name.trim() : undefined,
+      description:
+        typeof data.description === "string" ? data.description.trim() : undefined,
+      basePrice:
+        data.basePrice !== undefined
+          ? parseDecimal(data.basePrice, "basePrice")
+          : undefined,
+      categoryId,
     },
+    include: { category: true },
   });
 }
 
 async function deletePizza(id) {
-  id = parseInt(id);
+  const pizzaId = parsePositiveInt(id, "id");
 
-  const pizza = await prisma.pizza.findUnique({ where: { id } });
-  if (!pizza) throw new Error("Pizza introuvable");
-
-  // Supprimer d'abord les relations pivot
-  await prisma.pizzaIngredient.deleteMany({
-    where: { pizzaId: id },
-  });
-
-  await prisma.pizza.delete({
-    where: { id },
-  });
+  await prisma.$transaction([
+    prisma.pizzaIngredient.deleteMany({ where: { pizzaId } }),
+    prisma.pizza.delete({ where: { id: pizzaId } }),
+  ]);
 
   return true;
 }
 
-/* =========================
-   INGREDIENTS
-========================= */
-
 async function getAllIngredients() {
-  return prisma.ingredient.findMany({
-    orderBy: { name: "asc" },
-  });
+  return prisma.ingredient.findMany({ orderBy: { name: "asc" } });
 }
 
 async function createIngredient(data) {
-  const { name, price } = data;
-
-  if (!name || price === undefined) {
-    throw new Error("Nom et prix obligatoires");
-  }
+  const name = typeof data.name === "string" ? data.name.trim() : "";
+  if (!name) throw new Error("name is required");
 
   return prisma.ingredient.create({
     data: {
       name,
-      price: Number(price),
-      isExtra: true,
+      price: parseDecimal(data.price, "price"),
+      isExtra: data.isExtra === undefined ? true : Boolean(data.isExtra),
     },
   });
 }
 
-
 async function updateIngredient(id, data) {
-  id = parseInt(id);
+  const ingredientId = parsePositiveInt(id, "id");
 
-  const ingredient = await prisma.ingredient.findUnique({ where: { id } });
-  if (!ingredient) throw new Error("Ingrédient introuvable");
+  const existing = await prisma.ingredient.findUnique({ where: { id: ingredientId } });
+  if (!existing) throw new Error("Ingredient not found");
 
   return prisma.ingredient.update({
-    where: { id },
+    where: { id: ingredientId },
     data: {
-      name: data.name ?? ingredient.name,
-      price: data.price !== undefined ? Number(data.price) : ingredient.price,
-      // pas de modification d'isExtra
+      name: typeof data.name === "string" ? data.name.trim() : undefined,
+      price: data.price !== undefined ? parseDecimal(data.price, "price") : undefined,
+      isExtra: typeof data.isExtra === "boolean" ? data.isExtra : undefined,
     },
   });
 }
 
 async function deleteIngredient(id) {
-  id = parseInt(id);
+  const ingredientId = parsePositiveInt(id, "id");
 
-  const ingredient = await prisma.ingredient.findUnique({
-    where: { id },
-  });
-  if (!ingredient) throw new Error("Ingrédient introuvable");
-
-  // Supprimer relations pivot
-  await prisma.pizzaIngredient.deleteMany({
-    where: { ingredientId: id },
-  });
-
-  await prisma.ingredient.delete({
-    where: { id },
-  });
+  await prisma.$transaction([
+    prisma.pizzaIngredient.deleteMany({ where: { ingredientId } }),
+    prisma.ingredient.delete({ where: { id: ingredientId } }),
+  ]);
 
   return true;
 }
 
-/* =========================
-   LIAISON PIZZA / INGREDIENT
-========================= */
-
 async function addIngredientToPizza(pizzaId, ingredientId) {
-  pizzaId = parseInt(pizzaId);
-  ingredientId = parseInt(ingredientId);
+  const parsedPizzaId = parsePositiveInt(pizzaId, "pizzaId");
+  const parsedIngredientId = parsePositiveInt(ingredientId, "ingredientId");
 
-  const pizza = await prisma.pizza.findUnique({
-    where: { id: pizzaId },
-  });
-  if (!pizza) throw new Error("Pizza introuvable");
+  await prisma.pizza.findUniqueOrThrow({ where: { id: parsedPizzaId } });
+  await prisma.ingredient.findUniqueOrThrow({ where: { id: parsedIngredientId } });
 
-  const ingredient = await prisma.ingredient.findUnique({
-    where: { id: ingredientId },
-  });
-  if (!ingredient) throw new Error("Ingrédient introuvable");
-
-  // Vérifier si déjà lié
-  const existingLink = await prisma.pizzaIngredient.findFirst({
-    where: { pizzaId, ingredientId },
-  });
-
-  if (existingLink) {
-    throw new Error("Ingrédient déjà lié à cette pizza");
+  try {
+    return await prisma.pizzaIngredient.create({
+      data: {
+        pizzaId: parsedPizzaId,
+        ingredientId: parsedIngredientId,
+      },
+    });
+  } catch (err) {
+    if (err.code === "P2002") {
+      throw new Error("Ingredient already linked to this pizza");
+    }
+    throw err;
   }
-
-  return prisma.pizzaIngredient.create({
-    data: {
-      pizzaId,
-      ingredientId,
-    },
-  });
 }
 
 async function removeIngredientFromPizza(pizzaId, ingredientId) {
   return prisma.pizzaIngredient.delete({
     where: {
       pizzaId_ingredientId: {
-        pizzaId: parseInt(pizzaId),
-        ingredientId: parseInt(ingredientId),
+        pizzaId: parsePositiveInt(pizzaId, "pizzaId"),
+        ingredientId: parsePositiveInt(ingredientId, "ingredientId"),
       },
     },
   });

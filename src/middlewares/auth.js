@@ -1,37 +1,50 @@
 const jwt = require("jsonwebtoken");
-const JWT_SECRET = process.env.JWT_SECRET || "secret";
+const { JWT_SECRET } = require("../lib/env");
+const prisma = require("../lib/prisma");
 
-// Middleware pour vérifier que l'utilisateur est connecté
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Token manquant" });
+    return res.status(401).json({ error: "Token missing" });
   }
 
   const token = authHeader.split(" ")[1];
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
+    const userId = Number(decoded.userId ?? decoded.id);
+
+    if (!Number.isInteger(userId)) {
+      return res.status(401).json({ error: "Invalid token payload" });
+    }
+
+    const dbUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!dbUser) {
+      return res.status(401).json({ error: "User not found" });
+    }
 
     req.user = {
-      userId: decoded.userId || decoded.id, // ✅ toujours userId
-      role: decoded.role,
+      userId: dbUser.id,
+      role: dbUser.role,
     };
 
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: "Token invalide" });
+    return next();
+  } catch (_err) {
+    return res.status(401).json({ error: "Invalid token" });
   }
 }
 
-
-// Middleware pour vérifier que l'utilisateur est admin
 function adminMiddleware(req, res, next) {
-  if (req.user.role !== "ADMIN") {
-    return res.status(403).json({ error: "Accès refusé, admin seulement" });
+  if (!req.user || req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "Admin access only" });
   }
-  next();
+
+  return next();
 }
 
 module.exports = { authMiddleware, adminMiddleware };

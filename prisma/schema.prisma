@@ -8,89 +8,177 @@ datasource db {
 }
 
 model User {
-  id        Int     @id @default(autoincrement())
-  name      String
-  phone     String
-  email     String  @unique
-  password  String
-  role      Role    @default(CLIENT)
-  orders    Order[]
+  id             Int             @id @default(autoincrement())
+  name           String
+  phone          String
+  email          String          @unique
+  password       String
+  emailVerified  Boolean         @default(false)
+  phoneVerified  Boolean         @default(false)
+  emailOtpCode   String?
+  phoneOtpCode   String?
+  otpExpiresAt   DateTime?
+  role           Role            @default(CLIENT)
+  orders         Order[]
+  messageThreads MessageThread[]
+  sentMessages   Message[]       @relation("MessageSenderUser")
+}
+
+model Category {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  pizzas      Pizza[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([active, sortOrder])
 }
 
 model Pizza {
-  id          Int    @id @default(autoincrement())
+  id          Int               @id @default(autoincrement())
   name        String
   description String
-  basePrice   Decimal @db.Decimal(10,2)
+  basePrice   Decimal           @db.Decimal(10, 2)
+  categoryId  Int?
+  category    Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   ingredients PizzaIngredient[]
-  orderItems OrderItem[]
+  orderItems  OrderItem[]
+
+  @@index([categoryId])
 }
 
 model Ingredient {
-  id       Int       @id @default(autoincrement())
-  name     String
-  price    Decimal @db.Decimal(10,2)
-  isExtra  Boolean   @default(true) // vrai pour suppléments
-  pizzas   PizzaIngredient[]
+  id      Int               @id @default(autoincrement())
+  name    String
+  price   Decimal           @db.Decimal(10, 2)
+  isExtra Boolean           @default(true)
+  pizzas  PizzaIngredient[]
 }
 
 model PizzaIngredient {
-  id           Int @id @default(autoincrement())
+  id           Int        @id @default(autoincrement())
   pizzaId      Int
   ingredientId Int
-
-  pizza        Pizza @relation(fields: [pizzaId], references: [id])
+  pizza        Pizza      @relation(fields: [pizzaId], references: [id])
   ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
 
   @@unique([pizzaId, ingredientId])
 }
 
+model Location {
+  id           Int        @id @default(autoincrement())
+  name         String
+  addressLine1 String
+  addressLine2 String?
+  postalCode   String
+  city         String
+  country      String     @default("France")
+  latitude     Decimal?   @db.Decimal(9, 6)
+  longitude    Decimal?   @db.Decimal(9, 6)
+  notes        String?
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  timeSlots    TimeSlot[]
+
+  @@index([active, name])
+}
+
 model TimeSlot {
-  id            Int      @id @default(autoincrement())
+  id            Int       @id @default(autoincrement())
   startTime     DateTime
   endTime       DateTime
   maxPizzas     Int
-  currentPizzas Int      @default(0)
-  active        Boolean  @default(true)
-  serviceDate   DateTime // la date du service, pour ne montrer que les créneaux du jour
+  currentPizzas Int       @default(0)
+  active        Boolean   @default(true)
+  serviceDate   DateTime
+  locationId    Int?
+  location      Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
   orders        Order[]
-  
+
   @@index([serviceDate])
+  @@index([active, startTime])
+  @@index([locationId])
+  @@index([locationId, serviceDate, startTime])
 }
 
 model Order {
-  id         Int          @id @default(autoincrement())
-  user       User         @relation(fields: [userId], references: [id])
+  id         Int         @id @default(autoincrement())
+  user       User        @relation(fields: [userId], references: [id])
   userId     Int
-  timeSlot   TimeSlot?     @relation(fields: [timeSlotId], references: [id])
+  timeSlot   TimeSlot?   @relation(fields: [timeSlotId], references: [id])
   timeSlotId Int?
-
   items      OrderItem[]
-
-  total      Decimal      @db.Decimal(10,2)
-  status     OrderStatus  @default(PENDING)
-  createdAt  DateTime     @default(now())
+  total      Decimal     @db.Decimal(10, 2)
+  status     OrderStatus @default(PENDING)
+  createdAt  DateTime    @default(now())
 
   @@index([userId])
+  @@index([userId, status, createdAt])
+  @@index([status, createdAt])
   @@index([timeSlotId, status])
 }
 
 model OrderItem {
-  id        Int      @id @default(autoincrement())
-
-  order     Order    @relation(fields: [orderId], references: [id])
-  orderId   Int
-
-  pizza     Pizza    @relation(fields: [pizzaId], references: [id])
-  pizzaId   Int
-
-  quantity  Int
-
-  unitPrice Decimal   @db.Decimal(10,2)
-
-  customizations Json  // ingrédients ajoutés / retirés
+  id             Int     @id @default(autoincrement())
+  order          Order   @relation(fields: [orderId], references: [id])
+  orderId        Int
+  pizza          Pizza   @relation(fields: [pizzaId], references: [id])
+  pizzaId        Int
+  quantity       Int
+  unitPrice      Decimal @db.Decimal(10, 2)
+  customizations Json
 
   @@index([orderId])
+  @@index([orderId, pizzaId])
+}
+
+model HomeGalleryImage {
+  id           Int      @id @default(autoincrement())
+  title        String?
+  description  String?
+  imageUrl     String
+  thumbnailUrl String?
+  altText      String?
+  sortOrder    Int      @default(0)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([active, sortOrder])
+}
+
+model MessageThread {
+  id            Int                 @id @default(autoincrement())
+  userId        Int?
+  user          User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  subject       String?
+  status        MessageThreadStatus @default(OPEN)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  lastMessageAt DateTime            @default(now())
+  messages      Message[]
+
+  @@index([userId, status])
+  @@index([status, lastMessageAt])
+}
+
+model Message {
+  id           Int           @id @default(autoincrement())
+  threadId     Int
+  thread       MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender       MessageSender
+  senderUserId Int?
+  senderUser   User?         @relation("MessageSenderUser", fields: [senderUserId], references: [id], onDelete: SetNull)
+  content      String
+  isRead       Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+
+  @@index([threadId, createdAt])
+  @@index([senderUserId])
 }
 
 enum OrderStatus {
@@ -103,4 +191,15 @@ enum OrderStatus {
 enum Role {
   CLIENT
   ADMIN
+}
+
+enum MessageThreadStatus {
+  OPEN
+  CLOSED
+}
+
+enum MessageSender {
+  CLIENT
+  ADMIN
+  SYSTEM
 }

@@ -1,12 +1,8 @@
 const pizzaService = require("../services/pizza.service");
 
-// =========================
-// PIZZAS
-// =========================
-
 async function getAllPizzas(req, res) {
   try {
-    const pizzas = await pizzaService.getAllPizzas();
+    const pizzas = await pizzaService.getAllPizzas(req.query);
     res.json(pizzas);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -43,17 +39,13 @@ async function updatePizza(req, res) {
 async function deletePizza(req, res) {
   try {
     await pizzaService.deletePizza(req.params.id);
-    res.json({ message: "Pizza supprimée" });
+    res.json({ message: "Pizza deleted" });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 }
 
-// =========================
-// INGREDIENTS
-// =========================
-
-async function getAllIngredients(req, res) {
+async function getAllIngredients(_req, res) {
   try {
     const ingredients = await pizzaService.getAllIngredients();
     res.json(ingredients);
@@ -73,10 +65,7 @@ async function createIngredient(req, res) {
 
 async function updateIngredient(req, res) {
   try {
-    const ingredient = await pizzaService.updateIngredient(
-      req.params.id,
-      req.body
-    );
+    const ingredient = await pizzaService.updateIngredient(req.params.id, req.body);
     res.json(ingredient);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -86,25 +75,16 @@ async function updateIngredient(req, res) {
 async function deleteIngredient(req, res) {
   try {
     await pizzaService.deleteIngredient(req.params.id);
-    res.json({ message: "Ingrédient supprimé" });
+    res.json({ message: "Ingredient deleted" });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 }
 
-// =========================
-// LIAISON PIZZA / INGREDIENT
-// =========================
-
 async function addIngredientToPizza(req, res) {
   try {
     const { pizzaId, ingredientId } = req.body;
-
-    const link = await pizzaService.addIngredientToPizza(
-      pizzaId,
-      ingredientId
-    );
-
+    const link = await pizzaService.addIngredientToPizza(pizzaId, ingredientId);
     res.status(201).json(link);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -114,13 +94,8 @@ async function addIngredientToPizza(req, res) {
 async function removeIngredientFromPizza(req, res) {
   try {
     const { pizzaId, ingredientId } = req.body;
-
-    await pizzaService.removeIngredientFromPizza(
-      pizzaId,
-      ingredientId
-    );
-
-    res.json({ message: "Ingrédient retiré de la pizza" });
+    await pizzaService.removeIngredientFromPizza(pizzaId, ingredientId);
+    res.json({ message: "Ingredient removed from pizza" });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
