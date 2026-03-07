@@ -286,7 +286,6 @@ async function loginUser({ email, password }) {
   if (!match) throw new Error("Invalid email or password");
 
   if (!user.emailVerified) {
-    const verification = await issueVerificationCodes(user, { regenerate: true });
     throw createHttpError(
       "Account not verified. Please verify your email.",
       {
@@ -295,9 +294,8 @@ async function loginUser({ email, password }) {
         details: {
           verificationRequired: true,
           email: user.email,
-          channels: verification.channels,
-          delivery: verification.delivery,
-          ...buildOtpDebugPayload(verification),
+          channels: { email: true },
+          message: "Use verification start endpoint to request a new code.",
         },
       }
     );
