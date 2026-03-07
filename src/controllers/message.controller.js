@@ -1,9 +1,33 @@
 const messageService = require("../services/message.service");
 
+function emitMessageNotification(io, { sender, threadId, threadUserId }) {
+  if (!io || !threadId) return;
+
+  const payload = {
+    threadId,
+    sender,
+    at: new Date().toISOString(),
+  };
+
+  if (sender === "CLIENT") {
+    io.to("admins").emit("message:new", payload);
+    return;
+  }
+
+  if (sender === "ADMIN" && threadUserId) {
+    io.to(`user:${threadUserId}`).emit("message:new", payload);
+  }
+}
+
 async function createThread(req, res) {
   try {
-    const thread = await messageService.createThread(req.user, req.body);
-    res.status(201).json(thread);
+    const result = await messageService.createThread(req.user, req.body);
+    emitMessageNotification(req.app.get("io"), {
+      sender: result.sender,
+      threadId: result.threadId,
+      threadUserId: result.threadUserId,
+    });
+    res.status(201).json(result.thread);
   } catch (err) {
     const status = err.message === "Unauthorized" ? 401 : 400;
     res.status(status).json({ error: err.message });
@@ -12,12 +36,19 @@ async function createThread(req, res) {
 
 async function addMessageToThread(req, res) {
   try {
-    const message = await messageService.addMessageToThread(
+    const result = await messageService.addMessageToThread(
       req.user,
       req.params.threadId,
       req.body
     );
-    res.status(201).json(message);
+
+    emitMessageNotification(req.app.get("io"), {
+      sender: result.sender,
+      threadId: result.threadId,
+      threadUserId: result.threadUserId,
+    });
+
+    res.status(201).json(result.message);
   } catch (err) {
     const statusMap = {
       Unauthorized: 401,

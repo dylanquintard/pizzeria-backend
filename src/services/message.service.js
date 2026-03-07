@@ -90,7 +90,7 @@ async function createThread(user, payload) {
   const sender = getSenderFromUser(user);
   const now = new Date();
 
-  return prisma.$transaction(async (tx) => {
+  const thread = await prisma.$transaction(async (tx) => {
     const thread = await tx.messageThread.create({
       data: {
         userId: user.userId,
@@ -116,6 +116,13 @@ async function createThread(user, payload) {
       },
     });
   });
+
+  return {
+    thread,
+    sender,
+    threadUserId: thread?.userId || user.userId,
+    threadId: thread?.id || null,
+  };
 }
 
 async function addMessageToThread(user, threadId, payload) {
@@ -128,7 +135,7 @@ async function addMessageToThread(user, threadId, payload) {
   const sender = getSenderFromUser(user);
   const now = new Date();
 
-  return prisma.$transaction(async (tx) => {
+  const message = await prisma.$transaction(async (tx) => {
     const message = await tx.message.create({
       data: {
         threadId: thread.id,
@@ -149,6 +156,13 @@ async function addMessageToThread(user, threadId, payload) {
 
     return message;
   });
+
+  return {
+    message,
+    sender,
+    threadUserId: thread.userId || null,
+    threadId: thread.id,
+  };
 }
 
 async function getMyThreads(userId) {
@@ -248,3 +262,4 @@ module.exports = {
   updateThreadStatus,
   deleteThreadAdmin,
 };
+

@@ -59,32 +59,53 @@ const io = new Server(server, {
   },
 });
 
+function extractToken(payload) {
+  if (typeof payload === "string") return payload;
+  if (payload && typeof payload.token === "string") return payload.token;
+  return null;
+}
+
+function decodeTokenOrAckError(payload, ack) {
+  const token = extractToken(payload);
+  if (!token) {
+    ack({ ok: false, error: "Token missing" });
+    return null;
+  }
+
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (_err) {
+    ack({ ok: false, error: "Invalid token" });
+    return null;
+  }
+}
+
 io.on("connection", (socket) => {
   socket.on("joinAdminRoom", (payload = {}, ack = () => {}) => {
-    const token =
-      typeof payload === "string"
-        ? payload
-        : typeof payload.token === "string"
-          ? payload.token
-          : null;
+    const decoded = decodeTokenOrAckError(payload, ack);
+    if (!decoded) return;
 
-    if (!token) {
-      ack({ ok: false, error: "Token missing" });
+    if (decoded.role !== "ADMIN") {
+      ack({ ok: false, error: "Admin role required" });
       return;
     }
 
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      if (decoded.role !== "ADMIN") {
-        ack({ ok: false, error: "Admin role required" });
-        return;
-      }
+    socket.join("admins");
+    ack({ ok: true });
+  });
 
-      socket.join("admins");
-      ack({ ok: true });
-    } catch (_err) {
-      ack({ ok: false, error: "Invalid token" });
+  socket.on("joinUserRoom", (payload = {}, ack = () => {}) => {
+    const decoded = decodeTokenOrAckError(payload, ack);
+    if (!decoded) return;
+
+    const userId = Number(decoded.userId);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      ack({ ok: false, error: "Invalid user id" });
+      return;
     }
+
+    socket.join(`user:${userId}`);
+    ack({ ok: true });
   });
 });
 
