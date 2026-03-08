@@ -1,7 +1,14 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { CORS_ORIGINS, PORT, TRUST_PROXY, ENABLE_HSTS, HSTS_MAX_AGE } = require("./lib/env");
+const {
+  CORS_ORIGINS,
+  PORT,
+  TRUST_PROXY,
+  ENABLE_HSTS,
+  HSTS_MAX_AGE,
+  UPLOAD_DIR,
+} = require("./lib/env");
 
 const app = express();
 app.disable("x-powered-by");
@@ -39,6 +46,7 @@ app.use((req, res, next) => {
   }
   next();
 });
+app.use("/uploads", express.static(UPLOAD_DIR, { maxAge: "7d" }));
 
 const pizzaRoutes = require("./routes/pizza.routes");
 const orderRoutes = require("./routes/order.routes");

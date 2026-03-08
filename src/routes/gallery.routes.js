@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const galleryController = require("../controllers/gallery.controller");
 const { authMiddleware, adminMiddleware } = require("../middlewares/auth");
+const { handleGalleryImageUpload } = require("../middlewares/gallery-upload");
 
 router.get("/", galleryController.getPublicGallery);
 router.get(
@@ -9,6 +10,13 @@ router.get(
   authMiddleware,
   adminMiddleware,
   galleryController.getGalleryAdmin
+);
+router.post(
+  "/upload",
+  authMiddleware,
+  adminMiddleware,
+  handleGalleryImageUpload,
+  galleryController.uploadGalleryImage
 );
 router.get("/:id", galleryController.getGalleryImageById);
 router.post(

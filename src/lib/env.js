@@ -1,3 +1,5 @@
+const path = require("path");
+
 function getRequiredEnv(name) {
   const value = process.env[name];
   if (!value || !value.trim()) {
@@ -49,6 +51,15 @@ function parseCookieName(value) {
   return normalized;
 }
 
+function parseOptionalHttpUrl(value, fieldName) {
+  if (value === undefined || value === null || value === "") return "";
+  const normalized = normalizeOrigin(value);
+  if (!/^https?:\/\/.+/i.test(normalized)) {
+    throw new Error(`${fieldName} must be a valid http(s) URL`);
+  }
+  return normalized;
+}
+
 function assertJwtSecretStrength(secret) {
   if (secret.length < 32) {
     throw new Error("JWT_SECRET must be at least 32 characters");
@@ -74,6 +85,14 @@ const AUTH_COOKIE_MAX_AGE = parsePositiveInt(
   "AUTH_COOKIE_MAX_AGE",
   7 * 24 * 60 * 60 * 1000
 );
+const UPLOAD_DIR = path.resolve(
+  String(process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads")).trim()
+);
+const UPLOAD_MAX_MB = parsePositiveInt(process.env.UPLOAD_MAX_MB, "UPLOAD_MAX_MB", 5);
+const UPLOAD_PUBLIC_BASE_URL = parseOptionalHttpUrl(
+  process.env.UPLOAD_PUBLIC_BASE_URL,
+  "UPLOAD_PUBLIC_BASE_URL"
+);
 
 if (AUTH_COOKIE_SAMESITE === "none" && !AUTH_COOKIE_SECURE) {
   throw new Error("AUTH_COOKIE_SECURE must be true when AUTH_COOKIE_SAMESITE is 'none'");
@@ -94,5 +113,8 @@ module.exports = {
   AUTH_COOKIE_SECURE,
   AUTH_COOKIE_SAMESITE,
   AUTH_COOKIE_MAX_AGE,
+  UPLOAD_DIR,
+  UPLOAD_MAX_MB,
+  UPLOAD_PUBLIC_BASE_URL,
   CORS_ORIGINS,
 };

@@ -1,4 +1,15 @@
+const crypto = require("crypto");
+const fs = require("fs/promises");
+const path = require("path");
+const sharp = require("sharp");
 const prisma = require("../lib/prisma");
+const { UPLOAD_DIR } = require("../lib/env");
+
+const GALLERY_DIRECTORY = path.join(UPLOAD_DIR, "gallery");
+const GALLERY_THUMB_DIRECTORY = path.join(GALLERY_DIRECTORY, "thumbs");
+const MAIN_IMAGE_WIDTH = 1920;
+const THUMB_IMAGE_WIDTH = 640;
+const THUMB_IMAGE_HEIGHT = 640;
 
 function parsePositiveInt(value, fieldName) {
   const parsed = Number(value);
@@ -38,6 +49,107 @@ function parseOptionalString(value) {
   if (typeof value !== "string") throw new Error("Invalid string field");
   const normalized = value.trim();
   return normalized || null;
+}
+
+function buildGeneratedFilename() {
+  const timestamp = Date.now();
+  const randomToken = crypto.randomBytes(6).toString("hex");
+  return `gallery-${timestamp}-${randomToken}.webp`;
+}
+
+function normalizeUploadPath(value) {
+  return String(value || "").trim().replace(/\\/g, "/");
+}
+
+function resolveLocalUploadPath(value) {
+  const raw = normalizeUploadPath(value);
+  if (!raw) return null;
+
+  let pathname = raw;
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      pathname = new URL(raw).pathname;
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  if (!pathname.startsWith("/uploads/")) return null;
+  const relativePath = pathname.replace(/^\/uploads\/+/, "");
+  if (!relativePath) return null;
+
+  const absolutePath = path.resolve(UPLOAD_DIR, relativePath);
+  const relativeFromUploadRoot = path.relative(UPLOAD_DIR, absolutePath);
+  if (
+    !relativeFromUploadRoot ||
+    relativeFromUploadRoot.startsWith("..") ||
+    path.isAbsolute(relativeFromUploadRoot)
+  ) {
+    return null;
+  }
+
+  return absolutePath;
+}
+
+async function removeLocalUploadIfPresent(value) {
+  const absolutePath = resolveLocalUploadPath(value);
+  if (!absolutePath) return;
+
+  try {
+    await fs.unlink(absolutePath);
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      console.warn("[gallery] failed to delete file", {
+        path: absolutePath,
+        error: err?.message || "unknown_error",
+      });
+    }
+  }
+}
+
+async function saveUploadedGalleryImage(fileBuffer) {
+  if (!Buffer.isBuffer(fileBuffer) || fileBuffer.length === 0) {
+    throw new Error("Uploaded file is empty");
+  }
+
+  await fs.mkdir(GALLERY_DIRECTORY, { recursive: true });
+  await fs.mkdir(GALLERY_THUMB_DIRECTORY, { recursive: true });
+
+  const fileName = buildGeneratedFilename();
+  const imageAbsolutePath = path.join(GALLERY_DIRECTORY, fileName);
+  const thumbnailAbsolutePath = path.join(GALLERY_THUMB_DIRECTORY, fileName);
+
+  const sourceImage = sharp(fileBuffer, { failOn: "error" }).rotate();
+  const metadata = await sourceImage.metadata();
+  if (!metadata.width || !metadata.height) {
+    throw new Error("Unsupported image payload");
+  }
+
+  const imageInfo = await sourceImage
+    .clone()
+    .resize({ width: MAIN_IMAGE_WIDTH, withoutEnlargement: true })
+    .webp({ quality: 84 })
+    .toFile(imageAbsolutePath);
+
+  await sourceImage
+    .clone()
+    .resize({
+      width: THUMB_IMAGE_WIDTH,
+      height: THUMB_IMAGE_HEIGHT,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({ quality: 80 })
+    .toFile(thumbnailAbsolutePath);
+
+  return {
+    imagePath: `/uploads/gallery/${fileName}`,
+    thumbnailPath: `/uploads/gallery/thumbs/${fileName}`,
+    width: imageInfo.width || metadata.width,
+    height: imageInfo.height || metadata.height,
+    sizeBytes: imageInfo.size || fileBuffer.length,
+    mimeType: "image/webp",
+  };
 }
 
 async function getGalleryImages(filters = {}) {
@@ -106,12 +218,18 @@ async function activateGalleryImage(id, active) {
 
 async function deleteGalleryImage(id) {
   const imageId = parsePositiveInt(id, "id");
-  return prisma.homeGalleryImage.delete({
+  const deleted = await prisma.homeGalleryImage.delete({
     where: { id: imageId },
   });
+  await Promise.all([
+    removeLocalUploadIfPresent(deleted.imageUrl),
+    removeLocalUploadIfPresent(deleted.thumbnailUrl),
+  ]);
+  return deleted;
 }
 
 module.exports = {
+  saveUploadedGalleryImage,
   getGalleryImages,
   getGalleryImageById,
   createGalleryImage,

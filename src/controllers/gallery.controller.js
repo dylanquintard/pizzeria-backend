@@ -1,4 +1,24 @@
 const galleryService = require("../services/gallery.service");
+const { UPLOAD_PUBLIC_BASE_URL } = require("../lib/env");
+
+function buildPublicAssetUrl(req, assetPath) {
+  const normalizedPath = String(assetPath || "").trim();
+  if (!normalizedPath) return normalizedPath;
+
+  if (UPLOAD_PUBLIC_BASE_URL) {
+    return `${UPLOAD_PUBLIC_BASE_URL}${normalizedPath}`;
+  }
+
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  const protocol = forwardedProto || req.protocol || "http";
+  const host = req.get("host");
+  if (!host) return normalizedPath;
+
+  return `${protocol}://${host}${normalizedPath}`;
+}
 
 async function getPublicGallery(req, res) {
   try {
@@ -28,6 +48,30 @@ async function getGalleryAdmin(req, res) {
     res.json(images);
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+}
+
+async function uploadGalleryImage(req, res) {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        error: "image file is required (multipart field name: image)",
+      });
+    }
+
+    const uploadedImage = await galleryService.saveUploadedGalleryImage(req.file.buffer);
+    return res.status(201).json({
+      imageUrl: buildPublicAssetUrl(req, uploadedImage.imagePath),
+      thumbnailUrl: buildPublicAssetUrl(req, uploadedImage.thumbnailPath),
+      width: uploadedImage.width,
+      height: uploadedImage.height,
+      sizeBytes: uploadedImage.sizeBytes,
+      mimeType: uploadedImage.mimeType,
+    });
+  } catch (err) {
+    return res.status(400).json({
+      error: err?.message || "Error while uploading gallery image",
+    });
   }
 }
 
@@ -77,6 +121,7 @@ module.exports = {
   getPublicGallery,
   getGalleryImageById,
   getGalleryAdmin,
+  uploadGalleryImage,
   createGalleryImage,
   updateGalleryImage,
   activateGalleryImage,
