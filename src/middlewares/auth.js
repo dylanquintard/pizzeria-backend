@@ -1,15 +1,39 @@
 const jwt = require("jsonwebtoken");
-const { JWT_SECRET } = require("../lib/env");
+const { AUTH_COOKIE_NAME, JWT_SECRET } = require("../lib/env");
 const prisma = require("../lib/prisma");
+
+function parseCookies(cookieHeader) {
+  const result = {};
+  const raw = String(cookieHeader || "");
+  if (!raw) return result;
+
+  for (const part of raw.split(";")) {
+    const [name, ...rest] = part.split("=");
+    const key = String(name || "").trim();
+    if (!key) continue;
+    const value = rest.join("=").trim();
+    try {
+      result[key] = decodeURIComponent(value);
+    } catch (_err) {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
 
 async function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
+  const bearerToken =
+    authHeader && authHeader.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+  const cookieToken = parseCookies(req.headers.cookie)[AUTH_COOKIE_NAME];
+  const token = bearerToken || cookieToken;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  if (!token) {
     return res.status(401).json({ error: "Token missing" });
   }
-
-  const token = authHeader.split(" ")[1];
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] });

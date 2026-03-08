@@ -33,6 +33,22 @@ function parseNodeEnv(value) {
   return normalized;
 }
 
+function parseSameSite(value, defaultValue) {
+  const normalized = String(value || defaultValue || "").trim().toLowerCase();
+  if (!["lax", "strict", "none"].includes(normalized)) {
+    throw new Error("AUTH_COOKIE_SAMESITE must be one of: lax, strict, none");
+  }
+  return normalized;
+}
+
+function parseCookieName(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    throw new Error("AUTH_COOKIE_NAME must not be empty");
+  }
+  return normalized;
+}
+
 function assertJwtSecretStrength(secret) {
   if (secret.length < 32) {
     throw new Error("JWT_SECRET must be at least 32 characters");
@@ -47,6 +63,21 @@ const PORT = Number(process.env.PORT) || 5000;
 const TRUST_PROXY = parseBooleanFlag(process.env.TRUST_PROXY, NODE_ENV === "production");
 const ENABLE_HSTS = parseBooleanFlag(process.env.ENABLE_HSTS, NODE_ENV === "production");
 const HSTS_MAX_AGE = parsePositiveInt(process.env.HSTS_MAX_AGE, "HSTS_MAX_AGE", 31536000);
+const AUTH_COOKIE_NAME = parseCookieName(process.env.AUTH_COOKIE_NAME || "pizzeria_auth");
+const AUTH_COOKIE_SECURE = parseBooleanFlag(process.env.AUTH_COOKIE_SECURE, NODE_ENV === "production");
+const AUTH_COOKIE_SAMESITE = parseSameSite(
+  process.env.AUTH_COOKIE_SAMESITE,
+  NODE_ENV === "production" ? "none" : "lax"
+);
+const AUTH_COOKIE_MAX_AGE = parsePositiveInt(
+  process.env.AUTH_COOKIE_MAX_AGE,
+  "AUTH_COOKIE_MAX_AGE",
+  7 * 24 * 60 * 60 * 1000
+);
+
+if (AUTH_COOKIE_SAMESITE === "none" && !AUTH_COOKIE_SECURE) {
+  throw new Error("AUTH_COOKIE_SECURE must be true when AUTH_COOKIE_SAMESITE is 'none'");
+}
 const CORS_ORIGINS = (process.env.CORS_ORIGIN || "https://pizzeria-front-dqty.onrender.com,http://localhost:3000/")
   .split(",")
   .map((item) => normalizeOrigin(item))
@@ -59,5 +90,9 @@ module.exports = {
   TRUST_PROXY,
   ENABLE_HSTS,
   HSTS_MAX_AGE,
+  AUTH_COOKIE_NAME,
+  AUTH_COOKIE_SECURE,
+  AUTH_COOKIE_SAMESITE,
+  AUTH_COOKIE_MAX_AGE,
   CORS_ORIGINS,
 };

@@ -1,7 +1,32 @@
 const userService = require("../services/user.service");
+const {
+  AUTH_COOKIE_NAME,
+  AUTH_COOKIE_MAX_AGE,
+  AUTH_COOKIE_SAMESITE,
+  AUTH_COOKIE_SECURE,
+} = require("../lib/env");
 
 function setNoStore(res) {
   res.setHeader("Cache-Control", "no-store");
+}
+
+function setAuthCookie(res, token) {
+  res.cookie(AUTH_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: AUTH_COOKIE_SECURE,
+    sameSite: AUTH_COOKIE_SAMESITE,
+    maxAge: AUTH_COOKIE_MAX_AGE,
+    path: "/",
+  });
+}
+
+function clearAuthCookie(res) {
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: AUTH_COOKIE_SECURE,
+    sameSite: AUTH_COOKIE_SAMESITE,
+    path: "/",
+  });
 }
 
 function sendError(res, err, defaultStatus = 400) {
@@ -39,6 +64,7 @@ async function login(req, res) {
     setNoStore(res);
     const { email, password } = req.body;
     const { user, token } = await userService.loginUser({ email, password });
+    setAuthCookie(res, token);
     res.json({ user, token });
   } catch (err) {
     sendError(res, err);
@@ -50,6 +76,9 @@ async function verifyEmail(req, res) {
     setNoStore(res);
     const { email, code } = req.body;
     const result = await userService.verifyEmailCode({ email, code });
+    if (result?.token) {
+      setAuthCookie(res, result.token);
+    }
     res.json(result);
   } catch (err) {
     sendError(res, err);
@@ -68,6 +97,8 @@ async function resendEmailVerification(req, res) {
 }
 
 async function logout(_req, res) {
+  setNoStore(res);
+  clearAuthCookie(res);
   res.json({ message: "Logout successful" });
 }
 
