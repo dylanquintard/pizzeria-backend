@@ -12,7 +12,7 @@ function normalizeOrigin(value) {
 
 const JWT_SECRET = getRequiredEnv("JWT_SECRET");
 const PORT = Number(process.env.PORT) || 5000;
-const CORS_ORIGINS = (process.env.CORS_ORIGIN || "https://pizzeria-front-dqty.onrender.com,https://app.base44.com,https://*.base44.com")
+const CORS_ORIGINS = (process.env.CORS_ORIGIN || "https://pizzeria-front-dqty.onrender.com,http://localhost:3000/")
   .split(",")
   .map((item) => normalizeOrigin(item))
   .filter(Boolean);

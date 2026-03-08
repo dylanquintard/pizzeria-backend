@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS "Message" CASCADE;
+DROP TABLE IF EXISTS "MessageThread" CASCADE;
+
+DROP TYPE IF EXISTS "MessageSender";
+DROP TYPE IF EXISTS "MessageThreadStatus";

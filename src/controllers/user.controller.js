@@ -39,6 +39,26 @@ async function login(req, res) {
   }
 }
 
+async function verifyEmail(req, res) {
+  try {
+    const { email, code } = req.body;
+    const result = await userService.verifyEmailCode({ email, code });
+    res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+}
+
+async function resendEmailVerification(req, res) {
+  try {
+    const { email } = req.body;
+    const result = await userService.resendEmailVerificationCode({ email });
+    res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+}
+
 async function logout(_req, res) {
   res.json({ message: "Logout successful" });
 }
@@ -113,6 +133,8 @@ async function adminDeleteUser(req, res) {
 
 module.exports = {
   register,
+  verifyEmail,
+  resendEmailVerification,
   login,
   logout,
   getUserOrders,
