@@ -1,5 +1,9 @@
 const userService = require("../services/user.service");
 
+function setNoStore(res) {
+  res.setHeader("Cache-Control", "no-store");
+}
+
 function sendError(res, err, defaultStatus = 400) {
   const status = Number(err?.status) || defaultStatus;
   const payload = {
@@ -16,6 +20,7 @@ function sendError(res, err, defaultStatus = 400) {
 
 async function register(req, res) {
   try {
+    setNoStore(res);
     const { name, email, phone, password } = req.body;
     const result = await userService.createUser({
       name,
@@ -31,6 +36,7 @@ async function register(req, res) {
 
 async function login(req, res) {
   try {
+    setNoStore(res);
     const { email, password } = req.body;
     const { user, token } = await userService.loginUser({ email, password });
     res.json({ user, token });
@@ -41,6 +47,7 @@ async function login(req, res) {
 
 async function verifyEmail(req, res) {
   try {
+    setNoStore(res);
     const { email, code } = req.body;
     const result = await userService.verifyEmailCode({ email, code });
     res.json(result);
@@ -51,6 +58,7 @@ async function verifyEmail(req, res) {
 
 async function resendEmailVerification(req, res) {
   try {
+    setNoStore(res);
     const { email } = req.body;
     const result = await userService.resendEmailVerificationCode({ email });
     res.json(result);

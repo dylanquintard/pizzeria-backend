@@ -13,11 +13,13 @@ const E164_PHONE_REGEX = /^\+[1-9]\d{7,14}$/;
 const OTP_CODE_REGEX = /^\d{6}$/;
 const DEFAULT_COUNTRY_DIAL_CODE = process.env.DEFAULT_COUNTRY_DIAL_CODE || "+33";
 const DEFAULT_EMAIL_OTP_TTL_MINUTES = 10;
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 let emailTransporter = null;
 
 function generateToken(user) {
   return jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, {
+    algorithm: "HS256",
     expiresIn: "7d",
   });
 }
@@ -34,6 +36,16 @@ function parseBooleanFlag(value, defaultValue) {
   if (value === undefined || value === null || value === "") return defaultValue;
   const normalized = String(value).trim().toLowerCase();
   return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+function shouldLogEmailOtpDebug() {
+  if (IS_PRODUCTION) return false;
+  return parseBooleanFlag(process.env.EMAIL_OTP_DEBUG_LOGGING, false);
+}
+
+function shouldExposeEmailOtpCode() {
+  if (IS_PRODUCTION) return false;
+  return parseBooleanFlag(process.env.EXPOSE_EMAIL_OTP_IN_RESPONSE, false);
 }
 
 function getEmailOtpTtlMinutes() {
@@ -117,6 +129,7 @@ function createEmailNotVerifiedError() {
 
 async function sendVerificationEmail({ email, name, code }) {
   const from = process.env.SMTP_FROM?.trim() || getRequiredMailEnv("SMTP_USER");
+  const smtpUser = getRequiredMailEnv("SMTP_USER");
   const ttlMinutes = getEmailOtpTtlMinutes();
   const subject = "Code de verification de votre email";
 
@@ -136,13 +149,35 @@ async function sendVerificationEmail({ email, name, code }) {
   `;
 
   try {
-    await getEmailTransporter().sendMail({
+    const info = await getEmailTransporter().sendMail({
       from,
       to: email,
+      envelope: {
+        from: smtpUser,
+        to: email,
+      },
       subject,
       text: textBody,
       html: htmlBody,
     });
+
+    if (shouldLogEmailOtpDebug()) {
+      console.log("[auth:otp] email queued", {
+        to: email,
+        code,
+        messageId: info?.messageId || null,
+        accepted: info?.accepted || [],
+        rejected: info?.rejected || [],
+        response: info?.response || null,
+      });
+    }
+
+    return {
+      messageId: info?.messageId || null,
+      accepted: info?.accepted || [],
+      rejected: info?.rejected || [],
+      response: info?.response || null,
+    };
   } catch (_err) {
     const err = new Error("Unable to send verification email");
     err.status = 502;
@@ -177,10 +212,36 @@ async function setAndSendEmailVerificationCode(user) {
     }
   }
 
+  const exposeCode = shouldExposeEmailOtpCode();
   return {
     user: updatedUser,
     expiresAt,
+    ...(exposeCode ? { debugEmailOtpCode: code } : {}),
   };
+}
+
+async function buildEmailVerificationChallengeForUser(user) {
+  try {
+    const challenge = await setAndSendEmailVerificationCode(user);
+    const details = {
+      verificationExpiresAt: challenge.expiresAt,
+    };
+
+    if (challenge.debugEmailOtpCode) {
+      details.debugEmailOtpCode = challenge.debugEmailOtpCode;
+    }
+
+    return details;
+  } catch (err) {
+    if (shouldLogEmailOtpDebug()) {
+      console.error("[auth:otp] unable to issue verification code during login", {
+        userId: user?.id,
+        email: user?.email,
+        error: err?.message || "unknown_error",
+      });
+    }
+    return null;
+  }
 }
 
 function normalizePhone(phone) {
@@ -325,12 +386,15 @@ async function createUser(data) {
   });
 
   try {
-    const { user: userWithOtp, expiresAt } = await setAndSendEmailVerificationCode(user);
+    const challenge = await setAndSendEmailVerificationCode(user);
 
     return {
-      user: sanitizeUser(userWithOtp),
+      user: sanitizeUser(challenge.user),
       requiresEmailVerification: true,
-      verificationExpiresAt: expiresAt,
+      verificationExpiresAt: challenge.expiresAt,
+      ...(challenge.debugEmailOtpCode
+        ? { debugEmailOtpCode: challenge.debugEmailOtpCode }
+        : {}),
     };
   } catch (err) {
     const strictDelivery = parseBooleanFlag(process.env.VERIFICATION_STRICT_DELIVERY, true);
@@ -391,10 +455,13 @@ async function resendEmailVerificationCode({ email }) {
     return { sent: true, alreadyVerified: true };
   }
 
-  const { expiresAt } = await setAndSendEmailVerificationCode(user);
+  const challenge = await setAndSendEmailVerificationCode(user);
   return {
     sent: true,
-    verificationExpiresAt: expiresAt,
+    verificationExpiresAt: challenge.expiresAt,
+    ...(challenge.debugEmailOtpCode
+      ? { debugEmailOtpCode: challenge.debugEmailOtpCode }
+      : {}),
   };
 }
 
@@ -407,7 +474,12 @@ async function loginUser({ email, password }) {
 
   const match = await bcrypt.compare(password, user.password);
   if (!match) throw new Error("Invalid email or password");
-  if (!user.emailVerified) throw createEmailNotVerifiedError();
+  if (!user.emailVerified) {
+    const err = createEmailNotVerifiedError();
+    const challenge = await buildEmailVerificationChallengeForUser(user);
+    if (challenge) err.details = challenge;
+    throw err;
+  }
 
   const token = generateToken(user);
   return { user: sanitizeUser(user), token };

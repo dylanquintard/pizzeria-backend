@@ -41,6 +41,12 @@ function parseSmtpPort(value) {
   return parsed;
 }
 
+function parseBooleanFlag(value, defaultValue) {
+  if (value === undefined || value === null || value === "") return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
 function getRequiredEnv(name) {
   const value = process.env[name];
   if (!value || !value.trim()) {
@@ -90,7 +96,8 @@ async function sendContactEmail(payload) {
   const message = parseRequiredString(payload?.message, "message", 5000);
 
   const from = getRequiredEnv("SMTP_FROM");
-  const target = process.env.CONTACT_RECIPIENT_EMAIL?.trim() || from;
+  const smtpUser = getRequiredEnv("SMTP_USER");
+  const target = process.env.CONTACT_RECIPIENT_EMAIL?.trim() || smtpUser;
 
   const finalSubject = subject || "Nouveau message via le formulaire de contact";
 
@@ -114,14 +121,32 @@ async function sendContactEmail(payload) {
   `;
 
   try {
-    await getTransporter().sendMail({
+    const info = await getTransporter().sendMail({
       from,
       to: target,
+      envelope: {
+        from: smtpUser,
+        to: target,
+      },
       replyTo: email,
       subject: finalSubject,
       text: textBody,
       html: htmlBody,
     });
+
+    const debugLogEnabled =
+      process.env.NODE_ENV !== "production" ||
+      parseBooleanFlag(process.env.CONTACT_DEBUG_LOGGING, false);
+
+    if (debugLogEnabled) {
+      console.log("[contact] email queued", {
+        to: target,
+        messageId: info?.messageId || null,
+        accepted: info?.accepted || [],
+        rejected: info?.rejected || [],
+        response: info?.response || null,
+      });
+    }
   } catch (_err) {
     const err = new Error("Unable to send email");
     err.status = 502;

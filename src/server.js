@@ -1,9 +1,12 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { CORS_ORIGINS, PORT } = require("./lib/env");
+const { CORS_ORIGINS, PORT, TRUST_PROXY, ENABLE_HSTS, HSTS_MAX_AGE } = require("./lib/env");
 
 const app = express();
+app.disable("x-powered-by");
+if (TRUST_PROXY) app.set("trust proxy", 1);
+
 const normalizeOrigin = (origin) => String(origin || "").trim().replace(/\/+$/, "");
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
@@ -24,6 +27,18 @@ const corsOptions = {
 
 app.use(express.json());
 app.use(cors(corsOptions));
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  const isHttps = req.secure || String(forwardedProto || "").toLowerCase() === "https";
+  if (ENABLE_HSTS && isHttps) {
+    res.setHeader("Strict-Transport-Security", `max-age=${HSTS_MAX_AGE}; includeSubDomains`);
+  }
+  next();
+});
 
 const pizzaRoutes = require("./routes/pizza.routes");
 const orderRoutes = require("./routes/order.routes");
