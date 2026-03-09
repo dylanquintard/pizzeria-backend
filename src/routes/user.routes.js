@@ -43,13 +43,22 @@ const authResendRateLimit = createRateLimiter({
   keyBuilder: buildAuthKey,
 });
 
+const authForgotPasswordRateLimit = createRateLimiter({
+  scope: "auth-forgot-password",
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 8,
+  keyBuilder: buildAuthKey,
+});
+
 router.post("/register", authRegisterRateLimit, userController.register);
 router.post("/verify-email", authVerifyEmailRateLimit, userController.verifyEmail);
 router.post("/resend-verification", authResendRateLimit, userController.resendEmailVerification);
+router.post("/forgot-password", authForgotPasswordRateLimit, userController.forgotPassword);
 router.post("/login", authLoginRateLimit, userController.login);
 router.post("/logout", authMiddleware, userController.logout);
 
 router.get("/me", authMiddleware, userController.me);
+router.get("/csrf-token", authMiddleware, userController.csrfToken);
 router.put("/me", authMiddleware, userController.updateMe);
 router.get("/orders", authMiddleware, userController.getUserOrders);
 

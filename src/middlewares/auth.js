@@ -1,6 +1,12 @@
 const jwt = require("jsonwebtoken");
-const { AUTH_COOKIE_NAME, JWT_SECRET } = require("../lib/env");
+const {
+  AUTH_COOKIE_NAME,
+  CSRF_COOKIE_NAME,
+  CSRF_HEADER_NAME,
+  JWT_SECRET,
+} = require("../lib/env");
 const prisma = require("../lib/prisma");
+const { validateCsrfTokenPair, readHeaderValue } = require("./csrf");
 
 function parseCookies(cookieHeader) {
   const result = {};
@@ -28,7 +34,8 @@ async function authMiddleware(req, res, next) {
     authHeader && authHeader.startsWith("Bearer ")
       ? authHeader.split(" ")[1]
       : null;
-  const cookieToken = parseCookies(req.headers.cookie)[AUTH_COOKIE_NAME];
+  const parsedCookies = parseCookies(req.headers.cookie);
+  const cookieToken = parsedCookies[AUTH_COOKIE_NAME];
   const token = bearerToken || cookieToken;
 
   if (!token) {
@@ -56,6 +63,23 @@ async function authMiddleware(req, res, next) {
       userId: dbUser.id,
       role: dbUser.role,
     };
+
+    // CSRF applies to browser cookie-authenticated requests.
+    // Bearer-only API clients are not vulnerable to browser CSRF.
+    const usesCookieAuth = Boolean(cookieToken);
+    if (usesCookieAuth) {
+      const csrfCookieToken = parsedCookies[CSRF_COOKIE_NAME];
+      const csrfHeaderToken = readHeaderValue(req, CSRF_HEADER_NAME);
+      const csrfIsValid = validateCsrfTokenPair({
+        method: req.method,
+        csrfCookieToken,
+        csrfHeaderToken,
+      });
+
+      if (!csrfIsValid) {
+        return res.status(403).json({ error: "Invalid CSRF token" });
+      }
+    }
 
     return next();
   } catch (_err) {

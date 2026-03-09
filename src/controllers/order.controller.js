@@ -1,4 +1,5 @@
 const orderService = require("../services/order.service");
+const { emitRealtimeEvent } = require("../lib/realtime");
 
 function getUserId(req) {
   return req.user?.userId || req.user?.id;
@@ -30,6 +31,16 @@ async function addToCart(req, res) {
       customizations
     );
 
+    emitRealtimeEvent(
+      "cart:updated",
+      {
+        type: "cart-item-added",
+        userId: Number(userId),
+        orderId: cart?.id || null,
+      },
+      { userIds: [userId] }
+    );
+
     res.json(cart);
   } catch (err) {
     console.error("addToCart error:", err);
@@ -43,6 +54,17 @@ async function removeItem(req, res) {
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
     const cart = await orderService.removeItemFromCart(userId, req.params.itemId);
+
+    emitRealtimeEvent(
+      "cart:updated",
+      {
+        type: "cart-item-removed",
+        userId: Number(userId),
+        orderId: cart?.id || null,
+      },
+      { userIds: [userId] }
+    );
+
     res.json(cart);
   } catch (err) {
     console.error("removeItem error:", err);
@@ -58,8 +80,33 @@ async function finalizeOrder(req, res) {
     const { timeSlotId } = req.body;
     const order = await orderService.finalizeOrder(userId, timeSlotId);
 
-    const io = req.app.get("io");
-    io.to("admins").emit("orderCompleted", order);
+    emitRealtimeEvent(
+      "orders:admin-updated",
+      {
+        type: "order-created",
+        orderId: order?.id || null,
+        status: order?.status || null,
+        userId: order?.user?.id || Number(userId),
+        timeSlotId: order?.timeSlot?.id || Number(timeSlotId),
+      },
+      { roles: ["ADMIN"] }
+    );
+
+    emitRealtimeEvent(
+      "orders:user-updated",
+      {
+        type: "order-created",
+        orderId: order?.id || null,
+        status: order?.status || null,
+      },
+      { userIds: [userId] }
+    );
+
+    emitRealtimeEvent("timeslots:updated", {
+      type: "order-created",
+      orderId: order?.id || null,
+      timeSlotId: order?.timeSlot?.id || Number(timeSlotId),
+    });
 
     res.json(order);
   } catch (err) {
@@ -97,7 +144,37 @@ async function deleteOrderAdmin(req, res) {
     }
 
     const { orderId } = req.params;
+    const existingOrder = await orderService.getOrderById(orderId);
     await orderService.deleteOrder(orderId);
+
+    emitRealtimeEvent(
+      "orders:admin-updated",
+      {
+        type: "order-deleted",
+        orderId: Number(orderId),
+      },
+      { roles: ["ADMIN"] }
+    );
+
+    if (existingOrder?.user?.id) {
+      emitRealtimeEvent(
+        "orders:user-updated",
+        {
+          type: "order-deleted",
+          orderId: Number(orderId),
+        },
+        { userIds: [existingOrder.user.id] }
+      );
+    }
+
+    if (existingOrder?.timeSlot?.id) {
+      emitRealtimeEvent("timeslots:updated", {
+        type: "order-deleted",
+        orderId: Number(orderId),
+        timeSlotId: existingOrder.timeSlot.id,
+      });
+    }
+
     res.json({ success: true });
   } catch (err) {
     console.error("deleteOrderAdmin error:", err);
@@ -126,6 +203,37 @@ async function updateOrderStatusAdmin(req, res) {
     }
 
     const updatedOrder = await orderService.updateOrderStatusAdmin(orderId, status);
+
+    emitRealtimeEvent(
+      "orders:admin-updated",
+      {
+        type: "order-status-updated",
+        orderId: updatedOrder?.id || Number(orderId),
+        status: updatedOrder?.status || String(status || "").toUpperCase(),
+      },
+      { roles: ["ADMIN"] }
+    );
+
+    if (updatedOrder?.user?.id) {
+      emitRealtimeEvent(
+        "orders:user-updated",
+        {
+          type: "order-status-updated",
+          orderId: updatedOrder.id,
+          status: updatedOrder.status,
+        },
+        { userIds: [updatedOrder.user.id] }
+      );
+    }
+
+    if (updatedOrder?.timeSlot?.id) {
+      emitRealtimeEvent("timeslots:updated", {
+        type: "order-status-updated",
+        orderId: updatedOrder.id,
+        timeSlotId: updatedOrder.timeSlot.id,
+      });
+    }
+
     res.json(updatedOrder);
   } catch (err) {
     console.error("updateOrderStatusAdmin error:", err);

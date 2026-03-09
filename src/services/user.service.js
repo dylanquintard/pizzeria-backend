@@ -1,5 +1,6 @@
 const { Role } = require("@prisma/client");
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const prisma = require("../lib/prisma");
@@ -14,6 +15,9 @@ const OTP_CODE_REGEX = /^\d{6}$/;
 const DEFAULT_COUNTRY_DIAL_CODE = process.env.DEFAULT_COUNTRY_DIAL_CODE || "+33";
 const DEFAULT_EMAIL_OTP_TTL_MINUTES = 10;
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const RANDOM_PASSWORD_LENGTH = 10;
+const RANDOM_PASSWORD_ALPHABET =
+  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*?";
 
 let emailTransporter = null;
 
@@ -115,6 +119,15 @@ function generateSixDigitCode() {
   return String(Math.floor(Math.random() * 1000000)).padStart(6, "0");
 }
 
+function generateRandomPassword(length = RANDOM_PASSWORD_LENGTH) {
+  let value = "";
+  for (let index = 0; index < length; index += 1) {
+    const position = crypto.randomInt(0, RANDOM_PASSWORD_ALPHABET.length);
+    value += RANDOM_PASSWORD_ALPHABET[position];
+  }
+  return value;
+}
+
 function getOtpExpirationDate() {
   const ttlMinutes = getEmailOtpTtlMinutes();
   return new Date(Date.now() + ttlMinutes * 60 * 1000);
@@ -180,6 +193,56 @@ async function sendVerificationEmail({ email, name, code }) {
     };
   } catch (_err) {
     const err = new Error("Unable to send verification email");
+    err.status = 502;
+    throw err;
+  }
+}
+
+async function sendPasswordResetEmail({ email, name, temporaryPassword }) {
+  const from = process.env.SMTP_FROM?.trim() || getRequiredMailEnv("SMTP_USER");
+  const smtpUser = getRequiredMailEnv("SMTP_USER");
+  const subject = "Reinitialisation de votre mot de passe";
+
+  const textBody = [
+    `Bonjour ${name},`,
+    "",
+    "Un nouveau mot de passe temporaire a ete genere pour votre compte.",
+    `Nouveau mot de passe: ${temporaryPassword}`,
+    "",
+    "Connectez-vous puis changez ce mot de passe depuis votre profil.",
+  ].join("\n");
+
+  const htmlBody = `
+    <p>Bonjour ${escapeHtml(name)},</p>
+    <p>Un nouveau mot de passe temporaire a ete genere pour votre compte.</p>
+    <p><strong>Nouveau mot de passe :</strong> ${escapeHtml(temporaryPassword)}</p>
+    <p>Connectez-vous puis changez ce mot de passe depuis votre profil.</p>
+  `;
+
+  try {
+    const info = await getEmailTransporter().sendMail({
+      from,
+      to: email,
+      envelope: {
+        from: smtpUser,
+        to: email,
+      },
+      subject,
+      text: textBody,
+      html: htmlBody,
+    });
+
+    if (shouldLogEmailOtpDebug()) {
+      console.log("[auth:password-reset] email queued", {
+        to: email,
+        messageId: info?.messageId || null,
+        accepted: info?.accepted || [],
+        rejected: info?.rejected || [],
+        response: info?.response || null,
+      });
+    }
+  } catch (_err) {
+    const err = new Error("Unable to send password reset email");
     err.status = 502;
     throw err;
   }
@@ -465,6 +528,54 @@ async function resendEmailVerificationCode({ email }) {
   };
 }
 
+async function forgotPassword({ email }) {
+  const normalizedEmail = normalizeEmail(email);
+  const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+
+  // Keep response identical to avoid account enumeration.
+  if (!user) {
+    return { sent: true };
+  }
+
+  const temporaryPassword = generateRandomPassword();
+  const passwordHash = await bcrypt.hash(temporaryPassword, SALT_ROUNDS);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      password: passwordHash,
+      emailOtpCode: null,
+      otpExpiresAt: null,
+    },
+  });
+
+  try {
+    await sendPasswordResetEmail({
+      email: user.email,
+      name: user.name,
+      temporaryPassword,
+    });
+  } catch (err) {
+    // Roll back password change if delivery fails.
+    try {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { password: user.password },
+      });
+    } catch (_rollbackErr) {
+      if (shouldLogEmailOtpDebug()) {
+        console.error("[auth:password-reset] rollback failed", {
+          userId: user.id,
+          email: user.email,
+        });
+      }
+    }
+    throw err;
+  }
+
+  return { sent: true };
+}
+
 async function loginUser({ email, password }) {
   const normalizedEmail = normalizeEmail(email);
   validatePasswordInput(password);
@@ -625,6 +736,7 @@ module.exports = {
   createUser,
   verifyEmailCode,
   resendEmailVerificationCode,
+  forgotPassword,
   loginUser,
   getOrdersByUserId,
   getMe,

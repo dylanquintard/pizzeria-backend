@@ -51,6 +51,17 @@ function parseCookieName(value) {
   return normalized;
 }
 
+function parseHeaderName(value, fallback) {
+  const normalized = String(value || fallback || "").trim().toLowerCase();
+  if (!normalized) {
+    throw new Error("CSRF_HEADER_NAME must not be empty");
+  }
+  if (!/^[a-z0-9-]+$/.test(normalized)) {
+    throw new Error("CSRF_HEADER_NAME contains invalid characters");
+  }
+  return normalized;
+}
+
 function parseOptionalHttpUrl(value, fieldName) {
   if (value === undefined || value === null || value === "") return "";
   const normalized = normalizeOrigin(value);
@@ -75,6 +86,8 @@ const TRUST_PROXY = parseBooleanFlag(process.env.TRUST_PROXY, NODE_ENV === "prod
 const ENABLE_HSTS = parseBooleanFlag(process.env.ENABLE_HSTS, NODE_ENV === "production");
 const HSTS_MAX_AGE = parsePositiveInt(process.env.HSTS_MAX_AGE, "HSTS_MAX_AGE", 31536000);
 const AUTH_COOKIE_NAME = parseCookieName(process.env.AUTH_COOKIE_NAME || "pizzeria_auth");
+const CSRF_COOKIE_NAME = parseCookieName(process.env.CSRF_COOKIE_NAME || "pizzeria_csrf");
+const CSRF_HEADER_NAME = parseHeaderName(process.env.CSRF_HEADER_NAME, "x-csrf-token");
 const AUTH_COOKIE_SECURE = parseBooleanFlag(process.env.AUTH_COOKIE_SECURE, NODE_ENV === "production");
 const AUTH_COOKIE_SAMESITE = parseSameSite(
   process.env.AUTH_COOKIE_SAMESITE,
@@ -110,6 +123,8 @@ module.exports = {
   ENABLE_HSTS,
   HSTS_MAX_AGE,
   AUTH_COOKIE_NAME,
+  CSRF_COOKIE_NAME,
+  CSRF_HEADER_NAME,
   AUTH_COOKIE_SECURE,
   AUTH_COOKIE_SAMESITE,
   AUTH_COOKIE_MAX_AGE,

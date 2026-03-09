@@ -1,7 +1,10 @@
 const userService = require("../services/user.service");
+const crypto = require("crypto");
 const {
   AUTH_COOKIE_NAME,
   AUTH_COOKIE_MAX_AGE,
+  CSRF_COOKIE_NAME,
+  CSRF_HEADER_NAME,
   AUTH_COOKIE_SAMESITE,
   AUTH_COOKIE_SECURE,
 } = require("../lib/env");
@@ -18,6 +21,47 @@ function setAuthCookie(res, token) {
     maxAge: AUTH_COOKIE_MAX_AGE,
     path: "/",
   });
+}
+
+function createCsrfToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function buildCsrfHeaderName() {
+  return CSRF_HEADER_NAME
+    .split("-")
+    .map((part) => {
+      const normalized = String(part || "").toLowerCase();
+      if (normalized === "csrf") return "CSRF";
+      return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    })
+    .join("-");
+}
+
+function setCsrfCookie(res, token) {
+  res.cookie(CSRF_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: AUTH_COOKIE_SECURE,
+    sameSite: AUTH_COOKIE_SAMESITE,
+    maxAge: AUTH_COOKIE_MAX_AGE,
+    path: "/",
+  });
+}
+
+function clearCsrfCookie(res) {
+  res.clearCookie(CSRF_COOKIE_NAME, {
+    httpOnly: true,
+    secure: AUTH_COOKIE_SECURE,
+    sameSite: AUTH_COOKIE_SAMESITE,
+    path: "/",
+  });
+}
+
+function issueCsrfToken(res) {
+  const token = createCsrfToken();
+  setCsrfCookie(res, token);
+  res.setHeader(buildCsrfHeaderName(), token);
+  return token;
 }
 
 function clearAuthCookie(res) {
@@ -65,6 +109,7 @@ async function login(req, res) {
     const { email, password } = req.body;
     const { user, token } = await userService.loginUser({ email, password });
     setAuthCookie(res, token);
+    issueCsrfToken(res);
     res.json({ user, token });
   } catch (err) {
     sendError(res, err);
@@ -78,6 +123,7 @@ async function verifyEmail(req, res) {
     const result = await userService.verifyEmailCode({ email, code });
     if (result?.token) {
       setAuthCookie(res, result.token);
+      issueCsrfToken(res);
     }
     res.json(result);
   } catch (err) {
@@ -96,14 +142,27 @@ async function resendEmailVerification(req, res) {
   }
 }
 
+async function forgotPassword(req, res) {
+  try {
+    setNoStore(res);
+    const { email } = req.body;
+    const result = await userService.forgotPassword({ email });
+    res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+}
+
 async function logout(_req, res) {
   setNoStore(res);
   clearAuthCookie(res);
+  clearCsrfCookie(res);
   res.json({ message: "Logout successful" });
 }
 
 async function getUserOrders(req, res) {
   try {
+    setNoStore(res);
     const userId = req.user.userId;
     const orders = await userService.getOrdersByUserId(userId);
     res.status(200).json(orders);
@@ -114,6 +173,8 @@ async function getUserOrders(req, res) {
 
 async function me(req, res) {
   try {
+    setNoStore(res);
+    issueCsrfToken(res);
     const user = await userService.getMe(req.user.userId);
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json(user);
@@ -124,12 +185,19 @@ async function me(req, res) {
 
 async function updateMe(req, res) {
   try {
+    setNoStore(res);
     const userId = req.user.userId;
     const updatedUser = await userService.updateMe(userId, req.body);
     res.status(200).json(updatedUser);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+}
+
+async function csrfToken(_req, res) {
+  setNoStore(res);
+  const token = issueCsrfToken(res);
+  res.json({ csrfToken: token });
 }
 
 async function getAllUsers(_req, res) {
@@ -174,10 +242,12 @@ module.exports = {
   register,
   verifyEmail,
   resendEmailVerification,
+  forgotPassword,
   login,
   logout,
   getUserOrders,
   me,
+  csrfToken,
   updateMe,
   getAllUsers,
   getUserById,

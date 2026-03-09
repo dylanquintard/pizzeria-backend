@@ -9,6 +9,7 @@ const {
   HSTS_MAX_AGE,
   UPLOAD_DIR,
 } = require("./lib/env");
+const { createOriginGuard } = require("./middlewares/csrf");
 
 const app = express();
 app.disable("x-powered-by");
@@ -28,12 +29,19 @@ const corsOptions = {
     }
     callback(new Error("Origin not allowed by CORS"));
   },
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   credentials: true,
+  exposedHeaders: ["X-CSRF-Token"],
 };
 
 app.use(express.json());
 app.use(cors(corsOptions));
+app.use(
+  createOriginGuard({
+    normalizeOrigin,
+    isAllowedOrigin,
+  })
+);
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -56,6 +64,7 @@ const categoryRoutes = require("./routes/category.routes");
 const locationRoutes = require("./routes/location.routes");
 const galleryRoutes = require("./routes/gallery.routes");
 const contactRoutes = require("./routes/contact.routes");
+const realtimeRoutes = require("./routes/realtime.routes");
 
 app.use("/api/pizzas", pizzaRoutes);
 app.use("/api/orders", orderRoutes);
@@ -65,6 +74,7 @@ app.use("/api/categories", categoryRoutes);
 app.use("/api/locations", locationRoutes);
 app.use("/api/gallery", galleryRoutes);
 app.use("/api/contact", contactRoutes);
+app.use("/api/realtime", realtimeRoutes);
 
 app.get("/", (_req, res) => {
   res.send("API Pizzeria running");
