@@ -7,6 +7,7 @@ const prisma = require("../lib/prisma");
 const { JWT_SECRET } = require("../lib/env");
 const { sanitizeUser } = require("../utils/user");
 const { normalizeCustomizations } = require("../utils/customizations");
+const { DELETED_PRODUCT_FALLBACK_NAME } = require("../utils/product");
 
 const SALT_ROUNDS = 10;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -18,7 +19,6 @@ const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const RANDOM_PASSWORD_LENGTH = 10;
 const RANDOM_PASSWORD_ALPHABET =
   "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*?";
-const DELETED_PRODUCT_FALLBACK_NAME = "Produit supprime";
 const ARCHIVED_USER_EMAIL =
   process.env.ARCHIVED_USER_EMAIL?.trim().toLowerCase() || "archived-user@local.invalid";
 const ARCHIVED_USER_NAME =

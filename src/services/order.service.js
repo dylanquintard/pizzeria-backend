@@ -1,6 +1,7 @@
 const { OrderStatus } = require("@prisma/client");
 const prisma = require("../lib/prisma");
 const { normalizeCustomizations } = require("../utils/customizations");
+const { DELETED_PRODUCT_FALLBACK_NAME } = require("../utils/product");
 const {
   isSlotReservedStatus,
   assertAllowedTransition,
@@ -12,8 +13,6 @@ const ORDER_INCLUDE = {
   timeSlot: { include: { location: true } },
   user: { select: { id: true, name: true } },
 };
-const DELETED_PRODUCT_FALLBACK_NAME = "Produit supprime";
-
 function parseDeletedProductSnapshot(customizations) {
   const snapshot = customizations?.deletedProductSnapshot;
   if (!snapshot || typeof snapshot !== "object") return null;
