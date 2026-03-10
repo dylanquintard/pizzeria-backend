@@ -7,7 +7,7 @@ const {
 } = require("../utils/order-status");
 
 const ORDER_INCLUDE = {
-  items: { include: { pizza: { include: { category: true } } } },
+  items: { include: { product: { include: { category: true } } } },
   timeSlot: { include: { location: true } },
   user: { select: { id: true, name: true } },
 };
@@ -28,7 +28,7 @@ function parseStatus(status) {
   return OrderStatus[normalized];
 }
 
-function getOrderPizzasCount(order) {
+function getOrderProductsCount(order) {
   return order.items.reduce((sum, item) => sum + item.quantity, 0);
 }
 
@@ -89,18 +89,17 @@ function formatOrderWithIngredientMap(order, ingredientMap) {
       .map((ingredient) => ({ id: ingredient.id, name: ingredient.name }));
 
     const productPayload = {
-      id: item.pizza.id,
-      name: item.pizza.name,
-      basePrice: Number(item.pizza.basePrice),
-      category: item.pizza.category
-        ? { id: item.pizza.category.id, name: item.pizza.category.name }
+      id: item.product.id,
+      name: item.product.name,
+      basePrice: Number(item.product.basePrice),
+      category: item.product.category
+        ? { id: item.product.category.id, name: item.product.category.name }
         : null,
     };
 
     return {
       id: item.id,
       product: productPayload,
-      pizza: productPayload,
       quantity: item.quantity,
       unitPrice: Number(item.unitPrice),
       addedIngredients,
@@ -162,7 +161,7 @@ async function findOrCreatePendingCart(tx, userId) {
 async function reserveSlotCapacity(
   tx,
   timeSlotId,
-  pizzasToReserve,
+  productsToReserve,
   { enforceStartBuffer = false } = {}
 ) {
   const slot = await tx.timeSlot.findUnique({ where: { id: timeSlotId } });
@@ -178,7 +177,7 @@ async function reserveSlotCapacity(
     }
   }
 
-  if (slot.maxPizzas < pizzasToReserve) {
+  if (slot.maxPizzas < productsToReserve) {
     throw new Error("Time slot full");
   }
 
@@ -187,12 +186,12 @@ async function reserveSlotCapacity(
       id: timeSlotId,
       active: true,
       currentPizzas: {
-        lte: slot.maxPizzas - pizzasToReserve,
+        lte: slot.maxPizzas - productsToReserve,
       },
     },
     data: {
       currentPizzas: {
-        increment: pizzasToReserve,
+        increment: productsToReserve,
       },
     },
   });
@@ -202,11 +201,11 @@ async function reserveSlotCapacity(
   }
 }
 
-async function releaseSlotCapacity(tx, timeSlotId, pizzasToRelease) {
+async function releaseSlotCapacity(tx, timeSlotId, productsToRelease) {
   const slot = await tx.timeSlot.findUnique({ where: { id: timeSlotId } });
   if (!slot) return;
 
-  const nextCount = Math.max(0, slot.currentPizzas - pizzasToRelease);
+  const nextCount = Math.max(0, slot.currentPizzas - productsToRelease);
   await tx.timeSlot.update({
     where: { id: timeSlotId },
     data: { currentPizzas: nextCount },
@@ -232,7 +231,7 @@ async function addToCart(userId, productId, quantity, customizations = {}) {
   const normalizedCustomizations = normalizeCustomizations(customizations);
 
   const updatedOrder = await prisma.$transaction(async (tx) => {
-    const product = await tx.pizza.findUnique({ where: { id: parsedProductId } });
+    const product = await tx.product.findUnique({ where: { id: parsedProductId } });
     if (!product) throw new Error("Product not found");
 
     const cart = await findOrCreatePendingCart(tx, parsedUserId);
@@ -258,7 +257,7 @@ async function addToCart(userId, productId, quantity, customizations = {}) {
     const existingItem = await tx.orderItem.findFirst({
       where: {
         orderId: cart.id,
-        pizzaId: parsedProductId,
+        productId: parsedProductId,
         customizations: {
           equals: normalizedCustomizations,
         },
@@ -274,7 +273,7 @@ async function addToCart(userId, productId, quantity, customizations = {}) {
       await tx.orderItem.create({
         data: {
           orderId: cart.id,
-          pizzaId: parsedProductId,
+          productId: parsedProductId,
           quantity: parsedQuantity,
           unitPrice,
           customizations: normalizedCustomizations,
@@ -336,9 +335,9 @@ async function finalizeOrder(userId, timeSlotId) {
       throw new Error("Cart is empty");
     }
 
-    const totalPizzas = getOrderPizzasCount(cart);
+    const totalProducts = getOrderProductsCount(cart);
 
-    await reserveSlotCapacity(tx, parsedTimeSlotId, totalPizzas, {
+    await reserveSlotCapacity(tx, parsedTimeSlotId, totalProducts, {
       enforceStartBuffer: true,
     });
 
@@ -415,10 +414,10 @@ async function deleteOrder(orderId) {
 
     if (!order) throw new Error("Order not found");
 
-    const pizzasCount = getOrderPizzasCount(order);
+    const productsCount = getOrderProductsCount(order);
 
     if (order.timeSlotId && isSlotReservedStatus(order.status)) {
-      await releaseSlotCapacity(tx, order.timeSlotId, pizzasCount);
+      await releaseSlotCapacity(tx, order.timeSlotId, productsCount);
     }
 
     await tx.orderItem.deleteMany({ where: { orderId: parsedOrderId } });
@@ -446,7 +445,7 @@ async function updateOrderStatusAdmin(orderId, status) {
       return tx.order.findUnique({ where: { id: parsedOrderId }, include: ORDER_INCLUDE });
     }
 
-    const pizzasCount = getOrderPizzasCount(order);
+    const productsCount = getOrderProductsCount(order);
     const wasReserved = isSlotReservedStatus(order.status);
     const willReserve = isSlotReservedStatus(nextStatus);
 
@@ -455,11 +454,11 @@ async function updateOrderStatusAdmin(orderId, status) {
     }
 
     if (!wasReserved && willReserve) {
-      await reserveSlotCapacity(tx, order.timeSlotId, pizzasCount);
+      await reserveSlotCapacity(tx, order.timeSlotId, productsCount);
     }
 
     if (wasReserved && !willReserve) {
-      await releaseSlotCapacity(tx, order.timeSlotId, pizzasCount);
+      await releaseSlotCapacity(tx, order.timeSlotId, productsCount);
     }
 
     await tx.order.update({

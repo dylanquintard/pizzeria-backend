@@ -396,18 +396,17 @@ function formatOrderForFrontend(order, ingredientMap) {
       .map((ingredient) => ({ id: ingredient.id, name: ingredient.name }));
 
     const productPayload = {
-      id: item.pizza.id,
-      name: item.pizza.name,
-      basePrice: Number(item.pizza.basePrice),
-      category: item.pizza.category
-        ? { id: item.pizza.category.id, name: item.pizza.category.name }
+      id: item.product.id,
+      name: item.product.name,
+      basePrice: Number(item.product.basePrice),
+      category: item.product.category
+        ? { id: item.product.category.id, name: item.product.category.name }
         : null,
     };
 
     return {
       id: item.id,
       product: productPayload,
-      pizza: productPayload,
       quantity: item.quantity,
       unitPrice: Number(item.unitPrice),
       addedIngredients,
@@ -606,7 +605,7 @@ async function getOrdersByUserId(userId) {
     where: { userId: parsedUserId },
     orderBy: { createdAt: "desc" },
     include: {
-      items: { include: { pizza: { include: { category: true } } } },
+      items: { include: { product: { include: { category: true } } } },
       timeSlot: { include: { location: true } },
     },
   });

@@ -29,7 +29,7 @@ model Category {
   description String?
   sortOrder   Int      @default(0)
   active      Boolean  @default(true)
-  products    Pizza[]
+  products    Product[]
   ingredients Ingredient[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -38,17 +38,18 @@ model Category {
   @@index([active, kind, sortOrder])
 }
 
-model Pizza {
+model Product {
   id          Int               @id @default(autoincrement())
   name        String
   description String
   basePrice   Decimal           @db.Decimal(10, 2)
   categoryId  Int?
   category    Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  ingredients PizzaIngredient[]
+  ingredients ProductIngredient[]
   orderItems  OrderItem[]
 
-  @@index([categoryId])
+  @@index([categoryId], map: "Pizza_categoryId_idx")
+  @@map("Pizza")
 }
 
 model Ingredient {
@@ -58,19 +59,20 @@ model Ingredient {
   isExtra    Boolean           @default(true)
   categoryId Int?
   category   Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  products   PizzaIngredient[]
+  products   ProductIngredient[]
 
   @@index([categoryId])
 }
 
-model PizzaIngredient {
+model ProductIngredient {
   id           Int        @id @default(autoincrement())
-  pizzaId      Int
+  productId    Int        @map("pizzaId")
   ingredientId Int
-  pizza        Pizza      @relation(fields: [pizzaId], references: [id])
+  product      Product    @relation(fields: [productId], references: [id])
   ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
 
-  @@unique([pizzaId, ingredientId])
+  @@unique([productId, ingredientId], map: "PizzaIngredient_pizzaId_ingredientId_key")
+  @@map("PizzaIngredient")
 }
 
 model Location {
@@ -131,14 +133,14 @@ model OrderItem {
   id             Int     @id @default(autoincrement())
   order          Order   @relation(fields: [orderId], references: [id])
   orderId        Int
-  pizza          Pizza   @relation(fields: [pizzaId], references: [id])
-  pizzaId        Int
+  product        Product @relation(fields: [productId], references: [id], map: "OrderItem_pizzaId_fkey")
+  productId      Int     @map("pizzaId")
   quantity       Int
   unitPrice      Decimal @db.Decimal(10, 2)
   customizations Json
 
   @@index([orderId])
-  @@index([orderId, pizzaId])
+  @@index([orderId, productId], map: "OrderItem_orderId_pizzaId_idx")
 }
 
 model HomeGalleryImage {

@@ -23,10 +23,10 @@ async function addToCart(req, res) {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const { productId, pizzaId, quantity, customizations } = req.body;
+    const { productId, quantity, customizations } = req.body;
     const cart = await orderService.addToCart(
       userId,
-      productId ?? pizzaId,
+      productId,
       quantity,
       customizations
     );
