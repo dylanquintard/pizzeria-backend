@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const pizzaController = require("../controllers/pizza.controller");
+const pizzaController = require("../controllers/product.controller");
 const { authMiddleware, adminMiddleware } = require("../middlewares/auth");
 
 router.get("/", pizzaController.getAllPizzas);

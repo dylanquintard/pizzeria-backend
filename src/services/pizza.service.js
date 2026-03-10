@@ -1,5 +1,10 @@
 const prisma = require("../lib/prisma");
 
+const CATEGORY_KINDS = {
+  PRODUCT: "PRODUCT",
+  INGREDIENT: "INGREDIENT",
+};
+
 function parsePositiveInt(value, fieldName) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -22,7 +27,25 @@ function parseDecimal(value, fieldName) {
   return parsed;
 }
 
-async function getAllPizzas(filters = {}) {
+function parseOptionalBoolean(value, fieldName) {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${fieldName} must be a boolean`);
+}
+
+async function ensureCategoryKind(categoryId, expectedKind) {
+  if (categoryId === null || categoryId === undefined) return;
+
+  const category = await prisma.category.findUnique({ where: { id: categoryId } });
+  if (!category) throw new Error("Category not found");
+  if (category.kind !== expectedKind) {
+    throw new Error(`Category kind must be ${expectedKind}`);
+  }
+}
+
+async function getAllProducts(filters = {}) {
   const categoryId = parseNullablePositiveInt(filters.categoryId, "categoryId");
 
   return prisma.pizza.findMany({
@@ -32,38 +55,37 @@ async function getAllPizzas(filters = {}) {
     include: {
       category: true,
       ingredients: {
-        include: { ingredient: true },
+        include: { ingredient: { include: { category: true } } },
       },
     },
     orderBy: [{ categoryId: "asc" }, { name: "asc" }],
   });
 }
 
-async function getPizzaById(id) {
-  const pizzaId = parsePositiveInt(id, "id");
+async function getProductById(id) {
+  const productId = parsePositiveInt(id, "id");
 
-  const pizza = await prisma.pizza.findUnique({
-    where: { id: pizzaId },
+  const product = await prisma.pizza.findUnique({
+    where: { id: productId },
     include: {
       category: true,
       ingredients: {
-        include: { ingredient: true },
+        include: { ingredient: { include: { category: true } } },
       },
     },
   });
 
-  if (!pizza) throw new Error("Pizza not found");
-  return pizza;
+  if (!product) throw new Error("Product not found");
+  return product;
 }
 
-async function createPizza(data) {
+async function createProduct(data) {
   const name = typeof data.name === "string" ? data.name.trim() : "";
   if (!name) throw new Error("name is required");
   const categoryId = parseNullablePositiveInt(data.categoryId, "categoryId");
 
   if (categoryId) {
-    const category = await prisma.category.findUnique({ where: { id: categoryId } });
-    if (!category) throw new Error("Category not found");
+    await ensureCategoryKind(categoryId, CATEGORY_KINDS.PRODUCT);
   }
 
   return prisma.pizza.create({
@@ -77,19 +99,18 @@ async function createPizza(data) {
   });
 }
 
-async function updatePizza(id, data) {
-  const pizzaId = parsePositiveInt(id, "id");
-  const existing = await prisma.pizza.findUnique({ where: { id: pizzaId } });
-  if (!existing) throw new Error("Pizza not found");
+async function updateProduct(id, data) {
+  const productId = parsePositiveInt(id, "id");
+  const existing = await prisma.pizza.findUnique({ where: { id: productId } });
+  if (!existing) throw new Error("Product not found");
   const categoryId = parseNullablePositiveInt(data.categoryId, "categoryId");
 
   if (categoryId) {
-    const category = await prisma.category.findUnique({ where: { id: categoryId } });
-    if (!category) throw new Error("Category not found");
+    await ensureCategoryKind(categoryId, CATEGORY_KINDS.PRODUCT);
   }
 
   return prisma.pizza.update({
-    where: { id: pizzaId },
+    where: { id: productId },
     data: {
       name: typeof data.name === "string" ? data.name.trim() : undefined,
       description:
@@ -104,30 +125,51 @@ async function updatePizza(id, data) {
   });
 }
 
-async function deletePizza(id) {
-  const pizzaId = parsePositiveInt(id, "id");
+async function deleteProduct(id) {
+  const productId = parsePositiveInt(id, "id");
 
   await prisma.$transaction([
-    prisma.pizzaIngredient.deleteMany({ where: { pizzaId } }),
-    prisma.pizza.delete({ where: { id: pizzaId } }),
+    prisma.pizzaIngredient.deleteMany({ where: { pizzaId: productId } }),
+    prisma.pizza.delete({ where: { id: productId } }),
   ]);
 
   return true;
 }
 
-async function getAllIngredients() {
-  return prisma.ingredient.findMany({ orderBy: { name: "asc" } });
+async function getAllIngredients(filters = {}) {
+  const categoryId = parseNullablePositiveInt(filters.categoryId, "categoryId");
+  const isExtra = parseOptionalBoolean(filters.isExtra, "isExtra");
+
+  return prisma.ingredient.findMany({
+    where: {
+      categoryId: categoryId === undefined ? undefined : categoryId,
+      isExtra: isExtra === undefined ? undefined : isExtra,
+    },
+    include: {
+      category: true,
+    },
+    orderBy: [{ categoryId: "asc" }, { name: "asc" }],
+  });
 }
 
 async function createIngredient(data) {
   const name = typeof data.name === "string" ? data.name.trim() : "";
   if (!name) throw new Error("name is required");
+  const categoryId = parseNullablePositiveInt(data.categoryId, "categoryId");
+
+  if (categoryId) {
+    await ensureCategoryKind(categoryId, CATEGORY_KINDS.INGREDIENT);
+  }
 
   return prisma.ingredient.create({
     data: {
       name,
       price: parseDecimal(data.price, "price"),
       isExtra: data.isExtra === undefined ? true : Boolean(data.isExtra),
+      categoryId,
+    },
+    include: {
+      category: true,
     },
   });
 }
@@ -137,6 +179,11 @@ async function updateIngredient(id, data) {
 
   const existing = await prisma.ingredient.findUnique({ where: { id: ingredientId } });
   if (!existing) throw new Error("Ingredient not found");
+  const categoryId = parseNullablePositiveInt(data.categoryId, "categoryId");
+
+  if (categoryId) {
+    await ensureCategoryKind(categoryId, CATEGORY_KINDS.INGREDIENT);
+  }
 
   return prisma.ingredient.update({
     where: { id: ingredientId },
@@ -144,6 +191,10 @@ async function updateIngredient(id, data) {
       name: typeof data.name === "string" ? data.name.trim() : undefined,
       price: data.price !== undefined ? parseDecimal(data.price, "price") : undefined,
       isExtra: typeof data.isExtra === "boolean" ? data.isExtra : undefined,
+      categoryId,
+    },
+    include: {
+      category: true,
     },
   });
 }
@@ -159,33 +210,33 @@ async function deleteIngredient(id) {
   return true;
 }
 
-async function addIngredientToPizza(pizzaId, ingredientId) {
-  const parsedPizzaId = parsePositiveInt(pizzaId, "pizzaId");
+async function addIngredientToProduct(productId, ingredientId) {
+  const parsedProductId = parsePositiveInt(productId, "productId");
   const parsedIngredientId = parsePositiveInt(ingredientId, "ingredientId");
 
-  await prisma.pizza.findUniqueOrThrow({ where: { id: parsedPizzaId } });
+  await prisma.pizza.findUniqueOrThrow({ where: { id: parsedProductId } });
   await prisma.ingredient.findUniqueOrThrow({ where: { id: parsedIngredientId } });
 
   try {
     return await prisma.pizzaIngredient.create({
       data: {
-        pizzaId: parsedPizzaId,
+        pizzaId: parsedProductId,
         ingredientId: parsedIngredientId,
       },
     });
   } catch (err) {
     if (err.code === "P2002") {
-      throw new Error("Ingredient already linked to this pizza");
+      throw new Error("Ingredient already linked to this product");
     }
     throw err;
   }
 }
 
-async function removeIngredientFromPizza(pizzaId, ingredientId) {
+async function removeIngredientFromProduct(productId, ingredientId) {
   return prisma.pizzaIngredient.delete({
     where: {
       pizzaId_ingredientId: {
-        pizzaId: parsePositiveInt(pizzaId, "pizzaId"),
+        pizzaId: parsePositiveInt(productId, "productId"),
         ingredientId: parsePositiveInt(ingredientId, "ingredientId"),
       },
     },
@@ -193,15 +244,23 @@ async function removeIngredientFromPizza(pizzaId, ingredientId) {
 }
 
 module.exports = {
-  getAllPizzas,
-  getPizzaById,
-  createPizza,
-  updatePizza,
-  deletePizza,
+  CATEGORY_KINDS,
+  getAllProducts,
+  getProductById,
+  createProduct,
+  updateProduct,
+  deleteProduct,
   getAllIngredients,
   createIngredient,
   updateIngredient,
   deleteIngredient,
-  addIngredientToPizza,
-  removeIngredientFromPizza,
+  addIngredientToProduct,
+  removeIngredientFromProduct,
+  getAllPizzas: getAllProducts,
+  getPizzaById: getProductById,
+  createPizza: createProduct,
+  updatePizza: updateProduct,
+  deletePizza: deleteProduct,
+  addIngredientToPizza: addIngredientToProduct,
+  removeIngredientFromPizza: removeIngredientFromProduct,
 };

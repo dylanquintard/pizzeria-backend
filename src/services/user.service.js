@@ -395,16 +395,19 @@ function formatOrderForFrontend(order, ingredientMap) {
       .filter(Boolean)
       .map((ingredient) => ({ id: ingredient.id, name: ingredient.name }));
 
+    const productPayload = {
+      id: item.pizza.id,
+      name: item.pizza.name,
+      basePrice: Number(item.pizza.basePrice),
+      category: item.pizza.category
+        ? { id: item.pizza.category.id, name: item.pizza.category.name }
+        : null,
+    };
+
     return {
       id: item.id,
-      pizza: {
-        id: item.pizza.id,
-        name: item.pizza.name,
-        basePrice: Number(item.pizza.basePrice),
-        category: item.pizza.category
-          ? { id: item.pizza.category.id, name: item.pizza.category.name }
-          : null,
-      },
+      product: productPayload,
+      pizza: productPayload,
       quantity: item.quantity,
       unitPrice: Number(item.unitPrice),
       addedIngredients,

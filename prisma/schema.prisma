@@ -24,15 +24,18 @@ model User {
 
 model Category {
   id          Int      @id @default(autoincrement())
-  name        String   @unique
+  name        String
+  kind        CategoryKind @default(PRODUCT)
   description String?
   sortOrder   Int      @default(0)
   active      Boolean  @default(true)
-  pizzas      Pizza[]
+  products    Pizza[]
+  ingredients Ingredient[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@index([active, sortOrder])
+  @@unique([name, kind])
+  @@index([active, kind, sortOrder])
 }
 
 model Pizza {
@@ -49,11 +52,15 @@ model Pizza {
 }
 
 model Ingredient {
-  id      Int               @id @default(autoincrement())
-  name    String
-  price   Decimal           @db.Decimal(10, 2)
-  isExtra Boolean           @default(true)
-  pizzas  PizzaIngredient[]
+  id         Int               @id @default(autoincrement())
+  name       String
+  price      Decimal           @db.Decimal(10, 2)
+  isExtra    Boolean           @default(true)
+  categoryId Int?
+  category   Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  products   PizzaIngredient[]
+
+  @@index([categoryId])
 }
 
 model PizzaIngredient {
@@ -159,4 +166,9 @@ enum OrderStatus {
 enum Role {
   CLIENT
   ADMIN
+}
+
+enum CategoryKind {
+  PRODUCT
+  INGREDIENT
 }

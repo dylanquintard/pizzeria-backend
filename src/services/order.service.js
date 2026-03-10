@@ -88,16 +88,19 @@ function formatOrderWithIngredientMap(order, ingredientMap) {
       .filter(Boolean)
       .map((ingredient) => ({ id: ingredient.id, name: ingredient.name }));
 
+    const productPayload = {
+      id: item.pizza.id,
+      name: item.pizza.name,
+      basePrice: Number(item.pizza.basePrice),
+      category: item.pizza.category
+        ? { id: item.pizza.category.id, name: item.pizza.category.name }
+        : null,
+    };
+
     return {
       id: item.id,
-      pizza: {
-        id: item.pizza.id,
-        name: item.pizza.name,
-        basePrice: Number(item.pizza.basePrice),
-        category: item.pizza.category
-          ? { id: item.pizza.category.id, name: item.pizza.category.name }
-          : null,
-      },
+      product: productPayload,
+      pizza: productPayload,
       quantity: item.quantity,
       unitPrice: Number(item.unitPrice),
       addedIngredients,
@@ -222,15 +225,15 @@ async function getCartByUserId(userId) {
   return formatSingleOrder(cart);
 }
 
-async function addToCart(userId, pizzaId, quantity, customizations = {}) {
+async function addToCart(userId, productId, quantity, customizations = {}) {
   const parsedUserId = parsePositiveInt(userId, "userId");
-  const parsedPizzaId = parsePositiveInt(pizzaId, "pizzaId");
+  const parsedProductId = parsePositiveInt(productId, "productId");
   const parsedQuantity = parsePositiveInt(quantity, "quantity");
   const normalizedCustomizations = normalizeCustomizations(customizations);
 
   const updatedOrder = await prisma.$transaction(async (tx) => {
-    const pizza = await tx.pizza.findUnique({ where: { id: parsedPizzaId } });
-    if (!pizza) throw new Error("Pizza not found");
+    const product = await tx.pizza.findUnique({ where: { id: parsedProductId } });
+    if (!product) throw new Error("Product not found");
 
     const cart = await findOrCreatePendingCart(tx, parsedUserId);
 
@@ -250,12 +253,12 @@ async function addToCart(userId, pizzaId, quantity, customizations = {}) {
       extrasTotal = extras.reduce((sum, ingredient) => sum + Number(ingredient.price), 0);
     }
 
-    const unitPrice = Number(pizza.basePrice) + extrasTotal;
+    const unitPrice = Number(product.basePrice) + extrasTotal;
 
     const existingItem = await tx.orderItem.findFirst({
       where: {
         orderId: cart.id,
-        pizzaId: parsedPizzaId,
+        pizzaId: parsedProductId,
         customizations: {
           equals: normalizedCustomizations,
         },
@@ -271,7 +274,7 @@ async function addToCart(userId, pizzaId, quantity, customizations = {}) {
       await tx.orderItem.create({
         data: {
           orderId: cart.id,
-          pizzaId: parsedPizzaId,
+          pizzaId: parsedProductId,
           quantity: parsedQuantity,
           unitPrice,
           customizations: normalizedCustomizations,

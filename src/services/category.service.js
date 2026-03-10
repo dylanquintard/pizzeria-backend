@@ -1,5 +1,10 @@
 const prisma = require("../lib/prisma");
 
+const CATEGORY_KINDS = {
+  PRODUCT: "PRODUCT",
+  INGREDIENT: "INGREDIENT",
+};
+
 function parsePositiveInt(value, fieldName) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -25,6 +30,20 @@ function parseOptionalBoolean(value) {
   throw new Error("active must be a boolean");
 }
 
+function parseCategoryKind(value, { required = false } = {}) {
+  if (value === undefined || value === null || value === "") {
+    if (required) throw new Error("kind is required");
+    return undefined;
+  }
+
+  const normalized = String(value).trim().toUpperCase();
+  if (!CATEGORY_KINDS[normalized]) {
+    throw new Error("kind must be PRODUCT or INGREDIENT");
+  }
+
+  return CATEGORY_KINDS[normalized];
+}
+
 function parseName(value) {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error("name is required");
@@ -34,7 +53,14 @@ function parseName(value) {
 
 async function getCategories(filters = {}) {
   const active = parseOptionalBoolean(filters.active);
-  const where = active === undefined ? undefined : { active };
+  const kind = parseCategoryKind(filters.kind, { required: false });
+  const where =
+    active === undefined && kind === undefined
+      ? undefined
+      : {
+          active: active === undefined ? undefined : active,
+          kind: kind === undefined ? undefined : kind,
+        };
 
   return prisma.category.findMany({
     where,
@@ -52,9 +78,12 @@ async function getCategoryById(id) {
 }
 
 async function createCategory(data) {
+  const kind = parseCategoryKind(data.kind, { required: false }) || CATEGORY_KINDS.PRODUCT;
+
   return prisma.category.create({
     data: {
       name: parseName(data.name),
+      kind,
       description:
         typeof data.description === "string" && data.description.trim()
           ? data.description.trim()
@@ -70,10 +99,13 @@ async function updateCategory(id, data) {
   const existing = await prisma.category.findUnique({ where: { id: categoryId } });
   if (!existing) throw new Error("Category not found");
 
+  const nextKind = parseCategoryKind(data.kind, { required: false });
+
   return prisma.category.update({
     where: { id: categoryId },
     data: {
       name: data.name !== undefined ? parseName(data.name) : undefined,
+      kind: nextKind,
       description:
         data.description === undefined
           ? undefined
@@ -102,6 +134,7 @@ async function deleteCategory(id) {
 }
 
 module.exports = {
+  CATEGORY_KINDS,
   getCategories,
   getCategoryById,
   createCategory,

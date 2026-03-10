@@ -57,6 +57,7 @@ app.use((req, res, next) => {
 app.use("/uploads", express.static(UPLOAD_DIR, { maxAge: "7d" }));
 
 const pizzaRoutes = require("./routes/pizza.routes");
+const productRoutes = require("./routes/product.routes");
 const orderRoutes = require("./routes/order.routes");
 const timeSlotRoutes = require("./routes/timeslot.routes");
 const userRoutes = require("./routes/user.routes");
@@ -67,6 +68,7 @@ const contactRoutes = require("./routes/contact.routes");
 const realtimeRoutes = require("./routes/realtime.routes");
 
 app.use("/api/pizzas", pizzaRoutes);
+app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/timeslots", timeSlotRoutes);
 app.use("/api/users", userRoutes);
