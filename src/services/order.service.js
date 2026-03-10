@@ -212,7 +212,7 @@ async function reserveSlotCapacity(
   }
 
   if (enforceStartBuffer) {
-    const minStart = new Date(Date.now() + 15 * 60_000);
+    const minStart = new Date(Date.now() + 30 * 60_000);
     if (new Date(slot.startTime) < minStart) {
       throw new Error("Selected time slot is too soon");
     }

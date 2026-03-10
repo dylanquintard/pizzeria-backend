@@ -386,7 +386,7 @@ async function getPickupAvailability(params = {}) {
   ]);
 
   const reservedByKey = buildConcreteReservationMap(concreteSlots);
-  const minStartTime = new Date(Date.now() + 15 * 60_000);
+  const minStartTime = new Date(Date.now() + 30 * 60_000);
 
   const slots = templateSlots
     .filter((slot) => slot.location && slot.location.active)
