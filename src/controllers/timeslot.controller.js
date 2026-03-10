@@ -10,6 +10,15 @@ async function getWeeklySettings(_req, res) {
   }
 }
 
+async function getPublicWeeklySettings(_req, res) {
+  try {
+    const settings = await timeSlotService.getWeeklySettings();
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 async function upsertWeeklySetting(req, res) {
   try {
     const setting = await timeSlotService.upsertWeeklySetting(
@@ -41,6 +50,7 @@ async function getPickupAvailability(req, res) {
 
 module.exports = {
   getWeeklySettings,
+  getPublicWeeklySettings,
   upsertWeeklySetting,
   getPickupAvailability,
 };

@@ -3,6 +3,8 @@ const router = express.Router();
 const timeSlotController = require("../controllers/timeslot.controller");
 const { authMiddleware, adminMiddleware } = require("../middlewares/auth");
 
+router.get("/public-weekly-settings", timeSlotController.getPublicWeeklySettings);
+
 router.get(
   "/weekly-settings",
   authMiddleware,
