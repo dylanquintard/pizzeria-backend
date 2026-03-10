@@ -673,6 +673,11 @@ async function updateMe(userId, body) {
 
 async function getAllUsers() {
   const users = await prisma.user.findMany({
+    where: {
+      email: {
+        not: ARCHIVED_USER_EMAIL,
+      },
+    },
     orderBy: { id: "asc" },
     select: {
       id: true,
