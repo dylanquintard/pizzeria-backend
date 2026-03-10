@@ -5,6 +5,7 @@ const {
   isSlotReservedStatus,
   assertAllowedTransition,
 } = require("../utils/order-status");
+const timeSlotService = require("./timeslot.service");
 
 const ORDER_INCLUDE = {
   items: { include: { product: { include: { category: true } } } },
@@ -320,9 +321,17 @@ async function removeItemFromCart(userId, itemId) {
   return formatSingleOrder(updatedOrder);
 }
 
-async function finalizeOrder(userId, timeSlotId) {
+async function finalizeOrder(userId, pickupSelection = {}) {
   const parsedUserId = parsePositiveInt(userId, "userId");
-  const parsedTimeSlotId = parsePositiveInt(timeSlotId, "timeSlotId");
+  const pickupDate = pickupSelection?.pickupDate;
+  const pickupTime = pickupSelection?.pickupTime;
+  const locationId = pickupSelection?.locationId;
+
+  if (!pickupDate) throw new Error("pickupDate is required");
+  if (!pickupTime) throw new Error("pickupTime is required");
+  if (locationId === undefined || locationId === null || locationId === "") {
+    throw new Error("locationId is required");
+  }
 
   const finalizedOrder = await prisma.$transaction(async (tx) => {
     const cart = await tx.order.findFirst({
@@ -336,8 +345,13 @@ async function finalizeOrder(userId, timeSlotId) {
     }
 
     const totalProducts = getOrderProductsCount(cart);
+    const concreteSlot = await timeSlotService.findOrCreateConcreteSlotForPickup(tx, {
+      pickupDate,
+      pickupTime,
+      locationId,
+    });
 
-    await reserveSlotCapacity(tx, parsedTimeSlotId, totalProducts, {
+    await reserveSlotCapacity(tx, concreteSlot.id, totalProducts, {
       enforceStartBuffer: true,
     });
 
@@ -345,7 +359,7 @@ async function finalizeOrder(userId, timeSlotId) {
       where: { id: cart.id },
       data: {
         status: OrderStatus.COMPLETED,
-        timeSlotId: parsedTimeSlotId,
+        timeSlotId: concreteSlot.id,
       },
     });
 

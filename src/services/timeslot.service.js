@@ -1,61 +1,19 @@
 const prisma = require("../lib/prisma");
-
-function parseDateTime(value, fieldName) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    throw new Error(`${fieldName} is invalid`);
-  }
-  return date;
-}
-
-function parseServiceDate(value) {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
-  }
-
-  if (typeof value === "string") {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
-    if (match) {
-      const year = Number(match[1]);
-      const month = Number(match[2]);
-      const day = Number(match[3]);
-      return new Date(year, month - 1, day, 0, 0, 0, 0);
-    }
-  }
-
-  const parsed = parseDateTime(value, "serviceDate");
-  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
-}
-
-function parseTimeParts(value, fieldName) {
-  if (typeof value !== "string") {
-    throw new Error(`${fieldName} is invalid`);
-  }
-
-  const match = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/.exec(value.trim());
-  if (!match) {
-    throw new Error(`${fieldName} is invalid`);
-  }
-
-  return {
-    hours: Number(match[1]),
-    minutes: Number(match[2]),
-    seconds: Number(match[3] || 0),
-  };
-}
-
-function buildDateTimeFromServiceDate(serviceDate, timeValue, fieldName) {
-  const { hours, minutes, seconds } = parseTimeParts(timeValue, fieldName);
-  return new Date(
-    serviceDate.getFullYear(),
-    serviceDate.getMonth(),
-    serviceDate.getDate(),
-    hours,
-    minutes,
-    seconds,
-    0
-  );
-}
+const {
+  DAY_DEFINITIONS,
+  ANCHOR_WEEK_START,
+  ANCHOR_WEEK_END,
+  parseIsoDate,
+  formatIsoDate,
+  formatTimeValue,
+  buildDateTime,
+  addDays,
+  parseDayOfWeek,
+  getDayOfWeekKey,
+  getAnchorDateForDay,
+  getDateRange,
+  minutesBetween,
+} = require("../utils/weekly-timeslots");
 
 function parsePositiveInt(value, fieldName) {
   const parsed = Number(value);
@@ -65,181 +23,386 @@ function parsePositiveInt(value, fieldName) {
   return parsed;
 }
 
-function parseNullablePositiveInt(value, fieldName) {
-  if (value === undefined) return undefined;
-  if (value === null || value === "") return null;
+function parseOptionalBoolean(value, fieldName) {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${fieldName} must be a boolean`);
+}
+
+function parseOptionalPositiveInt(value, fieldName) {
+  if (value === undefined || value === null || value === "") return undefined;
   return parsePositiveInt(value, fieldName);
 }
 
 async function assertLocationExists(locationId) {
-  if (!locationId) return;
   const location = await prisma.location.findUnique({ where: { id: locationId } });
   if (!location) throw new Error("Location not found");
+  if (!location.active) throw new Error("Location must be active");
+  return location;
 }
 
-async function createTimeSlot(data) {
-  const startTime = parseDateTime(data.startTime, "startTime");
-  const endTime = parseDateTime(data.endTime, "endTime");
-  const maxPizzas = parsePositiveInt(data.maxPizzas, "maxPizzas");
-  const serviceDate = parseServiceDate(data.serviceDate || startTime);
-  const locationId = parseNullablePositiveInt(data.locationId, "locationId");
-
-  if (endTime <= startTime) {
-    throw new Error("endTime must be after startTime");
-  }
-
-  await assertLocationExists(locationId);
-
-  return prisma.timeSlot.create({
-    data: {
-      startTime,
-      endTime,
-      maxPizzas,
-      currentPizzas: 0,
-      active: true,
-      serviceDate,
-      locationId,
-    },
-    include: { location: true },
-  });
-}
-
-async function createTimeSlots({
-  serviceDate,
+function buildTemplateRows({
+  dayOfWeek,
   startTime,
   endTime,
-  duration,
+  slotDuration,
   maxPizzas,
   locationId,
 }) {
-  if (!serviceDate || !startTime || !endTime || !duration || !maxPizzas) {
-    throw new Error(
-      "serviceDate, startTime, endTime, duration and maxPizzas are required"
-    );
-  }
-
-  const slotDurationMinutes = parsePositiveInt(duration, "duration");
+  const anchorDate = getAnchorDateForDay(dayOfWeek);
+  const range = getDateRange(anchorDate);
+  const firstStart = buildDateTime(anchorDate, startTime, "startTime");
+  const lastEnd = buildDateTime(anchorDate, endTime, "endTime");
+  const duration = parsePositiveInt(slotDuration, "slotDuration");
   const capacity = parsePositiveInt(maxPizzas, "maxPizzas");
-  const parsedLocationId = parseNullablePositiveInt(locationId, "locationId");
-  await assertLocationExists(parsedLocationId);
 
-  const day = parseServiceDate(serviceDate);
-  let current = buildDateTimeFromServiceDate(day, startTime, "startTime");
-  const end = buildDateTimeFromServiceDate(day, endTime, "endTime");
-
-  if (end <= current) {
+  if (lastEnd <= firstStart) {
     throw new Error("endTime must be after startTime");
   }
 
-  const slots = [];
+  const rows = [];
+  let current = new Date(firstStart.getTime());
 
-  while (current < end) {
-    let slotEnd = new Date(current.getTime() + slotDurationMinutes * 60_000);
-    if (slotEnd > end) slotEnd = new Date(end);
+  while (current < lastEnd) {
+    const nextEnd = new Date(Math.min(lastEnd.getTime(), current.getTime() + duration * 60_000));
 
-    slots.push({
+    rows.push({
       startTime: new Date(current),
-      endTime: new Date(slotEnd),
+      endTime: new Date(nextEnd),
       maxPizzas: capacity,
       currentPizzas: 0,
       active: true,
-      serviceDate: new Date(day),
-      locationId: parsedLocationId,
+      serviceDate: range.start,
+      locationId,
     });
 
-    if (slotEnd.getTime() >= end.getTime()) break;
-    current = new Date(slotEnd);
+    if (nextEnd.getTime() >= lastEnd.getTime()) break;
+    current = new Date(nextEnd.getTime());
   }
 
-  return prisma.timeSlot.createMany({ data: slots });
+  return rows;
 }
 
-async function getAllTimeSlots() {
-  return prisma.timeSlot.findMany({
-    include: { location: true },
-    orderBy: { startTime: "asc" },
-  });
+function buildWeeklySetting(dayOfWeek, slots) {
+  if (!Array.isArray(slots) || slots.length === 0) {
+    return {
+      dayOfWeek,
+      isOpen: false,
+      startTime: null,
+      endTime: null,
+      slotDuration: null,
+      maxPizzas: null,
+      locationId: null,
+      location: null,
+      slotsCount: 0,
+    };
+  }
+
+  const ordered = [...slots].sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+  const first = ordered[0];
+  const last = ordered[ordered.length - 1];
+  const slotDuration = Math.max(1, minutesBetween(first.startTime, first.endTime));
+
+  return {
+    dayOfWeek,
+    isOpen: true,
+    startTime: formatTimeValue(first.startTime),
+    endTime: formatTimeValue(last.endTime),
+    slotDuration,
+    maxPizzas: first.maxPizzas,
+    locationId: first.locationId,
+    location: first.location || null,
+    slotsCount: ordered.length,
+  };
 }
 
-async function getActiveTimeSlots(minStartTime, filters = {}) {
-  const threshold = parseDateTime(minStartTime, "minStartTime");
-  const locationId = parseNullablePositiveInt(filters.locationId, "locationId");
-
+async function getWeeklySettings() {
   const slots = await prisma.timeSlot.findMany({
     where: {
-      active: true,
-      startTime: { gte: threshold },
-      locationId: locationId === undefined ? undefined : locationId,
-    },
-    include: { location: true },
-    orderBy: { startTime: "asc" },
-  });
-
-  return slots.filter((slot) => slot.currentPizzas < slot.maxPizzas);
-}
-
-async function updateTimeSlot(id, data) {
-  const parsedId = parsePositiveInt(id, "id");
-  const locationId = parseNullablePositiveInt(data.locationId, "locationId");
-  await assertLocationExists(locationId);
-
-  return prisma.timeSlot.update({
-    where: { id: parsedId },
-    data: {
-      startTime: data.startTime
-        ? parseDateTime(data.startTime, "startTime")
-        : undefined,
-      endTime: data.endTime ? parseDateTime(data.endTime, "endTime") : undefined,
-      maxPizzas:
-        data.maxPizzas !== undefined
-          ? parsePositiveInt(data.maxPizzas, "maxPizzas")
-          : undefined,
-      active: typeof data.active === "boolean" ? data.active : undefined,
-      serviceDate: data.serviceDate
-        ? parseServiceDate(data.serviceDate)
-        : undefined,
-      locationId,
-    },
-    include: { location: true },
-  });
-}
-
-async function activateTimeSlot(id, active) {
-  const parsedId = parsePositiveInt(id, "id");
-  return prisma.timeSlot.update({
-    where: { id: parsedId },
-    data: { active: Boolean(active) },
-    include: { location: true },
-  });
-}
-
-async function deleteTimeSlot(id) {
-  const parsedId = parsePositiveInt(id, "id");
-  return prisma.timeSlot.delete({ where: { id: parsedId } });
-}
-
-async function deleteSlotsByDate(dateStr) {
-  const serviceDate = parseServiceDate(dateStr);
-  const nextDate = new Date(serviceDate);
-  nextDate.setDate(nextDate.getDate() + 1);
-
-  return prisma.timeSlot.deleteMany({
-    where: {
       serviceDate: {
-        gte: serviceDate,
-        lt: nextDate,
+        gte: ANCHOR_WEEK_START,
+        lt: ANCHOR_WEEK_END,
       },
     },
+    include: { location: true },
+    orderBy: [{ serviceDate: "asc" }, { startTime: "asc" }, { id: "asc" }],
   });
+
+  const groupedByDay = new Map();
+  for (const slot of slots) {
+    const dayOfWeek = getDayOfWeekKey(slot.serviceDate);
+    if (!groupedByDay.has(dayOfWeek)) {
+      groupedByDay.set(dayOfWeek, []);
+    }
+    groupedByDay.get(dayOfWeek).push(slot);
+  }
+
+  return DAY_DEFINITIONS.map((definition) =>
+    buildWeeklySetting(definition.key, groupedByDay.get(definition.key) || [])
+  );
+}
+
+async function upsertWeeklySetting(dayOfWeek, payload = {}) {
+  const parsedDay = parseDayOfWeek(dayOfWeek);
+  const shouldOpen = parseOptionalBoolean(payload.isOpen, "isOpen") !== false;
+  const anchorDate = getAnchorDateForDay(parsedDay);
+  const range = getDateRange(anchorDate);
+
+  if (!shouldOpen) {
+    await prisma.timeSlot.deleteMany({
+      where: {
+        serviceDate: {
+          gte: range.start,
+          lt: range.end,
+        },
+      },
+    });
+
+    return buildWeeklySetting(parsedDay, []);
+  }
+
+  if (!payload.startTime) throw new Error("startTime is required");
+  if (!payload.endTime) throw new Error("endTime is required");
+  if (payload.slotDuration === undefined) throw new Error("slotDuration is required");
+  if (payload.maxPizzas === undefined) throw new Error("maxPizzas is required");
+
+  const locationId = parseOptionalPositiveInt(payload.locationId, "locationId");
+  if (!locationId) {
+    throw new Error("locationId is required");
+  }
+
+  await assertLocationExists(locationId);
+
+  const templateRows = buildTemplateRows({
+    dayOfWeek: parsedDay,
+    startTime: payload.startTime,
+    endTime: payload.endTime,
+    slotDuration: payload.slotDuration,
+    maxPizzas: payload.maxPizzas,
+    locationId,
+  });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.timeSlot.deleteMany({
+      where: {
+        serviceDate: {
+          gte: range.start,
+          lt: range.end,
+        },
+      },
+    });
+
+    await tx.timeSlot.createMany({ data: templateRows });
+  });
+
+  const location = await prisma.location.findUnique({ where: { id: locationId } });
+  const createdSlots = templateRows.map((slot) => ({ ...slot, location }));
+  return buildWeeklySetting(parsedDay, createdSlots);
+}
+
+function buildConcreteReservationMap(slots = []) {
+  const reservedByKey = new Map();
+
+  for (const slot of slots) {
+    if (!slot.locationId) continue;
+    const key = `${slot.locationId}:${formatTimeValue(slot.startTime)}`;
+    const currentValue = reservedByKey.get(key) || 0;
+    reservedByKey.set(key, currentValue + Number(slot.currentPizzas || 0));
+  }
+
+  return reservedByKey;
+}
+
+async function getPickupAvailability(params = {}) {
+  const requestedDate = parseIsoDate(params.date || new Date(), "date");
+  const requestedQuantity =
+    params.quantity === undefined ? 1 : parsePositiveInt(params.quantity, "quantity");
+
+  const dayOfWeek = getDayOfWeekKey(requestedDate);
+  const anchorDate = getAnchorDateForDay(dayOfWeek);
+  const templateRange = getDateRange(anchorDate);
+  const concreteRange = getDateRange(requestedDate);
+
+  const [templateSlots, concreteSlots] = await Promise.all([
+    prisma.timeSlot.findMany({
+      where: {
+        serviceDate: {
+          gte: templateRange.start,
+          lt: templateRange.end,
+        },
+        active: true,
+        locationId: { not: null },
+      },
+      include: { location: true },
+      orderBy: [{ startTime: "asc" }, { id: "asc" }],
+    }),
+    prisma.timeSlot.findMany({
+      where: {
+        serviceDate: {
+          gte: concreteRange.start,
+          lt: concreteRange.end,
+        },
+        startTime: {
+          gte: concreteRange.start,
+          lt: concreteRange.end,
+        },
+        locationId: { not: null },
+      },
+      orderBy: [{ startTime: "asc" }, { id: "asc" }],
+    }),
+  ]);
+
+  const reservedByKey = buildConcreteReservationMap(concreteSlots);
+  const minStartTime = new Date(Date.now() + 15 * 60_000);
+
+  const slots = templateSlots
+    .filter((slot) => slot.location && slot.location.active)
+    .map((templateSlot) => {
+      const pickupTime = formatTimeValue(templateSlot.startTime);
+      const concreteStart = buildDateTime(requestedDate, pickupTime, "pickupTime");
+      const slotDuration = Math.max(
+        1,
+        minutesBetween(templateSlot.startTime, templateSlot.endTime)
+      );
+      const concreteEnd = new Date(concreteStart.getTime() + slotDuration * 60_000);
+      const key = `${templateSlot.locationId}:${pickupTime}`;
+      const currentPizzas = Number(reservedByKey.get(key) || 0);
+      const maxPizzas = Number(templateSlot.maxPizzas || 0);
+      const remainingCapacity = Math.max(0, maxPizzas - currentPizzas);
+
+      return {
+        pickupDate: formatIsoDate(requestedDate),
+        pickupTime,
+        startTime: concreteStart,
+        endTime: concreteEnd,
+        maxPizzas,
+        currentPizzas,
+        remainingCapacity,
+        availableForQuantity: remainingCapacity >= requestedQuantity,
+        locationId: templateSlot.locationId,
+        location: templateSlot.location,
+      };
+    })
+    .filter((slot) => slot.startTime >= minStartTime)
+    .sort((a, b) => {
+      const startDiff = new Date(a.startTime) - new Date(b.startTime);
+      if (startDiff !== 0) return startDiff;
+      return Number(a.locationId || 0) - Number(b.locationId || 0);
+    });
+
+  return {
+    date: formatIsoDate(requestedDate),
+    dayOfWeek,
+    quantity: requestedQuantity,
+    slots,
+  };
+}
+
+async function getTemplateSlotForPickupSelection(
+  dbClient,
+  { pickupDate, pickupTime, locationId }
+) {
+  const serviceDate = parseIsoDate(pickupDate, "pickupDate");
+  const parsedLocationId = parsePositiveInt(locationId, "locationId");
+  const dayOfWeek = getDayOfWeekKey(serviceDate);
+  const anchorDate = getAnchorDateForDay(dayOfWeek);
+  const templateRange = getDateRange(anchorDate);
+  const templateStartTime = buildDateTime(anchorDate, pickupTime, "pickupTime");
+
+  return dbClient.timeSlot.findFirst({
+    where: {
+      serviceDate: {
+        gte: templateRange.start,
+        lt: templateRange.end,
+      },
+      locationId: parsedLocationId,
+      active: true,
+      startTime: templateStartTime,
+    },
+    orderBy: { id: "asc" },
+  });
+}
+
+async function findOrCreateConcreteSlotForPickup(
+  dbClient,
+  { pickupDate, pickupTime, locationId }
+) {
+  const serviceDate = parseIsoDate(pickupDate, "pickupDate");
+  const parsedLocationId = parsePositiveInt(locationId, "locationId");
+  const concreteRange = getDateRange(serviceDate);
+  const concreteStartTime = buildDateTime(serviceDate, pickupTime, "pickupTime");
+
+  const templateSlot = await getTemplateSlotForPickupSelection(dbClient, {
+    pickupDate: serviceDate,
+    pickupTime,
+    locationId: parsedLocationId,
+  });
+
+  if (!templateSlot) {
+    throw new Error("Selected pickup slot is not available");
+  }
+
+  const slotDuration = Math.max(1, minutesBetween(templateSlot.startTime, templateSlot.endTime));
+  const concreteEndTime = new Date(concreteStartTime.getTime() + slotDuration * 60_000);
+
+  const concreteWhere = {
+    serviceDate: {
+      gte: concreteRange.start,
+      lt: concreteRange.end,
+    },
+    locationId: parsedLocationId,
+    startTime: concreteStartTime,
+  };
+
+  const existingConcreteSlot = await dbClient.timeSlot.findFirst({
+    where: concreteWhere,
+    orderBy: { id: "asc" },
+  });
+
+  if (!existingConcreteSlot) {
+    await dbClient.timeSlot.create({
+      data: {
+        startTime: concreteStartTime,
+        endTime: concreteEndTime,
+        maxPizzas: templateSlot.maxPizzas,
+        currentPizzas: 0,
+        active: true,
+        serviceDate: concreteRange.start,
+        locationId: parsedLocationId,
+      },
+    });
+  }
+
+  const allMatchingSlots = await dbClient.timeSlot.findMany({
+    where: concreteWhere,
+    orderBy: { id: "asc" },
+  });
+
+  if (!allMatchingSlots.length) {
+    throw new Error("Unable to create pickup slot");
+  }
+
+  const primarySlot = allMatchingSlots[0];
+  const deletableDuplicateIds = allMatchingSlots
+    .slice(1)
+    .filter((slot) => Number(slot.currentPizzas || 0) === 0)
+    .map((slot) => slot.id);
+
+  if (deletableDuplicateIds.length) {
+    await dbClient.timeSlot.deleteMany({
+      where: { id: { in: deletableDuplicateIds } },
+    });
+  }
+
+  return primarySlot;
 }
 
 module.exports = {
-  createTimeSlot,
-  createTimeSlots,
-  getAllTimeSlots,
-  getActiveTimeSlots,
-  updateTimeSlot,
-  activateTimeSlot,
-  deleteTimeSlot,
-  deleteSlotsByDate,
+  getWeeklySettings,
+  upsertWeeklySetting,
+  getPickupAvailability,
+  getTemplateSlotForPickupSelection,
+  findOrCreateConcreteSlotForPickup,
 };

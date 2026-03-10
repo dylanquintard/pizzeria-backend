@@ -77,8 +77,12 @@ async function finalizeOrder(req, res) {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const { timeSlotId } = req.body;
-    const order = await orderService.finalizeOrder(userId, timeSlotId);
+    const { pickupDate, pickupTime, locationId } = req.body || {};
+    const order = await orderService.finalizeOrder(userId, {
+      pickupDate,
+      pickupTime,
+      locationId,
+    });
 
     emitRealtimeEvent(
       "orders:admin-updated",
@@ -87,7 +91,7 @@ async function finalizeOrder(req, res) {
         orderId: order?.id || null,
         status: order?.status || null,
         userId: order?.user?.id || Number(userId),
-        timeSlotId: order?.timeSlot?.id || Number(timeSlotId),
+        timeSlotId: order?.timeSlot?.id || null,
       },
       { roles: ["ADMIN"] }
     );
@@ -105,7 +109,7 @@ async function finalizeOrder(req, res) {
     emitRealtimeEvent("timeslots:updated", {
       type: "order-created",
       orderId: order?.id || null,
-      timeSlotId: order?.timeSlot?.id || Number(timeSlotId),
+      timeSlotId: order?.timeSlot?.id || null,
     });
 
     res.json(order);

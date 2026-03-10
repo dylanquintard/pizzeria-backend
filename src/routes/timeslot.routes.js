@@ -3,30 +3,19 @@ const router = express.Router();
 const timeSlotController = require("../controllers/timeslot.controller");
 const { authMiddleware, adminMiddleware } = require("../middlewares/auth");
 
-router.get("/", timeSlotController.getAllTimeSlots);
-router.get("/active", timeSlotController.getActiveTimeSlots);
-
-router.post("/", authMiddleware, adminMiddleware, timeSlotController.createTimeSlot);
-router.post(
-  "/batch",
+router.get(
+  "/weekly-settings",
   authMiddleware,
   adminMiddleware,
-  timeSlotController.createTimeSlotsBatch
+  timeSlotController.getWeeklySettings
+);
+router.put(
+  "/weekly-settings/:dayOfWeek",
+  authMiddleware,
+  adminMiddleware,
+  timeSlotController.upsertWeeklySetting
 );
 
-router.put("/:id", authMiddleware, adminMiddleware, timeSlotController.updateTimeSlot);
-router.patch(
-  "/:id/activate",
-  authMiddleware,
-  adminMiddleware,
-  timeSlotController.activateTimeSlot
-);
-router.delete("/:id", authMiddleware, adminMiddleware, timeSlotController.deleteTimeSlot);
-router.delete(
-  "/date/:date",
-  authMiddleware,
-  adminMiddleware,
-  timeSlotController.deleteSlotsByDate
-);
+router.get("/availability", authMiddleware, timeSlotController.getPickupAvailability);
 
 module.exports = router;
