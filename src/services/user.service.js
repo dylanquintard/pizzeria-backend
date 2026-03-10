@@ -18,6 +18,12 @@ const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const RANDOM_PASSWORD_LENGTH = 10;
 const RANDOM_PASSWORD_ALPHABET =
   "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*?";
+const ARCHIVED_USER_EMAIL =
+  process.env.ARCHIVED_USER_EMAIL?.trim().toLowerCase() || "archived-user@local.invalid";
+const ARCHIVED_USER_NAME =
+  process.env.ARCHIVED_USER_NAME?.trim() || "Client supprime";
+const ARCHIVED_USER_PHONE =
+  process.env.ARCHIVED_USER_PHONE?.trim() || "+33100000000";
 
 let emailTransporter = null;
 
@@ -714,23 +720,99 @@ async function updateUserRole(userId, newRole) {
   return sanitizeUser(updatedUser);
 }
 
+async function getOrCreateArchivedUser(tx) {
+  const existing = await tx.user.findUnique({ where: { email: ARCHIVED_USER_EMAIL } });
+  if (existing) return existing;
+
+  const fallbackPassword = generateRandomPassword(24);
+  const hashedPassword = await bcrypt.hash(fallbackPassword, SALT_ROUNDS);
+
+  try {
+    return await tx.user.create({
+      data: {
+        name: ARCHIVED_USER_NAME,
+        email: ARCHIVED_USER_EMAIL,
+        phone: ARCHIVED_USER_PHONE,
+        password: hashedPassword,
+        emailVerified: true,
+        phoneVerified: true,
+        role: Role.CLIENT,
+      },
+    });
+  } catch (err) {
+    if (err?.code === "P2002") {
+      const concurrentCreated = await tx.user.findUnique({
+        where: { email: ARCHIVED_USER_EMAIL },
+      });
+      if (concurrentCreated) return concurrentCreated;
+    }
+    throw err;
+  }
+}
+
 async function deleteUser(userId) {
   const parsedUserId = parsePositiveInt(userId, "userId");
 
   const user = await prisma.user.findUnique({ where: { id: parsedUserId } });
   if (!user) throw new Error("User not found");
+  if (user.email === ARCHIVED_USER_EMAIL) {
+    throw new Error("Cannot delete archived placeholder user");
+  }
 
-  return prisma.user.delete({
-    where: { id: parsedUserId },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      phone: true,
-      emailVerified: true,
-      phoneVerified: true,
-      role: true,
-    },
+  const orderCount = await prisma.order.count({ where: { userId: parsedUserId } });
+  if (orderCount === 0) {
+    return prisma.user.delete({
+      where: { id: parsedUserId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        emailVerified: true,
+        phoneVerified: true,
+        role: true,
+      },
+    });
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const archivedUser = await getOrCreateArchivedUser(tx);
+    if (archivedUser.id === parsedUserId) {
+      throw new Error("Cannot delete archived placeholder user");
+    }
+
+    const pendingOrders = await tx.order.findMany({
+      where: { userId: parsedUserId, status: "PENDING" },
+      select: { id: true },
+    });
+
+    if (pendingOrders.length > 0) {
+      const pendingOrderIds = pendingOrders.map((entry) => entry.id);
+      await tx.orderItem.deleteMany({
+        where: { orderId: { in: pendingOrderIds } },
+      });
+      await tx.order.deleteMany({
+        where: { id: { in: pendingOrderIds } },
+      });
+    }
+
+    await tx.order.updateMany({
+      where: { userId: parsedUserId },
+      data: { userId: archivedUser.id },
+    });
+
+    return tx.user.delete({
+      where: { id: parsedUserId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        emailVerified: true,
+        phoneVerified: true,
+        role: true,
+      },
+    });
   });
 }
 
