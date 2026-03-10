@@ -12,6 +12,18 @@ const ORDER_INCLUDE = {
   timeSlot: { include: { location: true } },
   user: { select: { id: true, name: true } },
 };
+const DELETED_PRODUCT_FALLBACK_NAME = "Produit supprime";
+
+function parseDeletedProductSnapshot(customizations) {
+  const snapshot = customizations?.deletedProductSnapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+
+  const expiresAt = new Date(snapshot.expiresAt);
+  if (Number.isNaN(expiresAt.getTime())) return null;
+  if (expiresAt <= new Date()) return null;
+
+  return snapshot;
+}
 
 function parsePositiveInt(value, fieldName) {
   const parsed = Number(value);
@@ -73,7 +85,9 @@ function formatOrderWithIngredientMap(order, ingredientMap) {
   if (!order) return { items: [] };
 
   const items = order.items.map((item) => {
-    const custom = normalizeCustomizations(item.customizations || {});
+    const rawCustomizations = item.customizations || {};
+    const custom = normalizeCustomizations(rawCustomizations);
+    const deletedSnapshot = parseDeletedProductSnapshot(rawCustomizations);
 
     const addedIngredients = custom.addedIngredients
       .map((id) => ingredientMap.get(id))
@@ -89,14 +103,27 @@ function formatOrderWithIngredientMap(order, ingredientMap) {
       .filter(Boolean)
       .map((ingredient) => ({ id: ingredient.id, name: ingredient.name }));
 
-    const productPayload = {
-      id: item.product.id,
-      name: item.product.name,
-      basePrice: Number(item.product.basePrice),
-      category: item.product.category
-        ? { id: item.product.category.id, name: item.product.category.name }
-        : null,
-    };
+    const productPayload = item.product
+      ? {
+          id: item.product.id,
+          name: item.product.name,
+          basePrice: Number(item.product.basePrice),
+          category: item.product.category
+            ? { id: item.product.category.id, name: item.product.category.name }
+            : null,
+        }
+      : {
+          id: null,
+          name: deletedSnapshot?.name || DELETED_PRODUCT_FALLBACK_NAME,
+          basePrice:
+            deletedSnapshot?.basePrice !== undefined
+              ? Number(deletedSnapshot.basePrice)
+              : Number(item.unitPrice),
+          category: deletedSnapshot?.categoryName
+            ? { id: null, name: deletedSnapshot.categoryName }
+            : null,
+          archived: true,
+        };
 
     return {
       id: item.id,

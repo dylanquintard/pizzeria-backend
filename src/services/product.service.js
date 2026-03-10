@@ -1,9 +1,11 @@
 const prisma = require("../lib/prisma");
+const { normalizeCustomizations } = require("../utils/customizations");
 
 const CATEGORY_KINDS = {
   PRODUCT: "PRODUCT",
   INGREDIENT: "INGREDIENT",
 };
+const DELETED_PRODUCT_SNAPSHOT_TTL_DAYS = 10;
 
 function parsePositiveInt(value, fieldName) {
   const parsed = Number(value);
@@ -33,6 +35,47 @@ function parseOptionalBoolean(value, fieldName) {
   if (value === "true") return true;
   if (value === "false") return false;
   throw new Error(`${fieldName} must be a boolean`);
+}
+
+function toIsoPlusDays(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString();
+}
+
+function buildDeletedProductSnapshot(product) {
+  return {
+    originalProductId: product.id,
+    name: product.name,
+    basePrice: Number(product.basePrice),
+    categoryName: product.category?.name || null,
+    deletedAt: new Date().toISOString(),
+    expiresAt: toIsoPlusDays(DELETED_PRODUCT_SNAPSHOT_TTL_DAYS),
+  };
+}
+
+function mergeCustomizationsWithDeletedSnapshot(customizations, snapshot) {
+  return {
+    ...normalizeCustomizations(customizations || {}),
+    deletedProductSnapshot: snapshot,
+  };
+}
+
+async function recalculateOrderTotal(client, orderId) {
+  const items = await client.orderItem.findMany({
+    where: { orderId },
+    select: { quantity: true, unitPrice: true },
+  });
+
+  const total = items.reduce(
+    (sum, item) => sum + Number(item.unitPrice) * Number(item.quantity || 0),
+    0
+  );
+
+  await client.order.update({
+    where: { id: orderId },
+    data: { total },
+  });
 }
 
 async function ensureCategoryKind(categoryId, expectedKind) {
@@ -127,11 +170,71 @@ async function updateProduct(id, data) {
 
 async function deleteProduct(id) {
   const productId = parsePositiveInt(id, "id");
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    include: { category: true },
+  });
+  if (!product) throw new Error("Product not found");
+  const deletedSnapshot = buildDeletedProductSnapshot(product);
 
-  await prisma.$transaction([
-    prisma.productIngredient.deleteMany({ where: { productId } }),
-    prisma.product.delete({ where: { id: productId } }),
-  ]);
+  try {
+    await prisma.$transaction(async (tx) => {
+      const linkedOrderItems = await tx.orderItem.findMany({
+        where: { productId },
+        select: {
+          id: true,
+          orderId: true,
+          customizations: true,
+          order: { select: { status: true } },
+        },
+      });
+
+      const pendingOrderItemIds = [];
+      const pendingOrderIds = new Set();
+      const historyOrderItems = [];
+
+      for (const item of linkedOrderItems) {
+        if (item.order?.status === "PENDING") {
+          pendingOrderItemIds.push(item.id);
+          pendingOrderIds.add(item.orderId);
+        } else {
+          historyOrderItems.push(item);
+        }
+      }
+
+      if (pendingOrderItemIds.length > 0) {
+        await tx.orderItem.deleteMany({
+          where: { id: { in: pendingOrderItemIds } },
+        });
+
+        for (const orderId of pendingOrderIds) {
+          await recalculateOrderTotal(tx, orderId);
+        }
+      }
+
+      for (const item of historyOrderItems) {
+        await tx.orderItem.update({
+          where: { id: item.id },
+          data: {
+            customizations: mergeCustomizationsWithDeletedSnapshot(
+              item.customizations,
+              deletedSnapshot
+            ),
+          },
+        });
+      }
+
+      await tx.productIngredient.deleteMany({ where: { productId } });
+      await tx.product.delete({ where: { id: productId } });
+    });
+  } catch (err) {
+    if (err?.code === "P2003") {
+      throw new Error(
+        "La suppression forcee du produit a echoue. Verifiez que la migration Prisma est bien appliquee."
+      );
+    }
+    throw err;
+  }
 
   return true;
 }
