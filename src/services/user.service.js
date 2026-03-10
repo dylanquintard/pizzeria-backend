@@ -18,6 +18,7 @@ const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const RANDOM_PASSWORD_LENGTH = 10;
 const RANDOM_PASSWORD_ALPHABET =
   "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*?";
+const DELETED_PRODUCT_FALLBACK_NAME = "Produit supprime";
 const ARCHIVED_USER_EMAIL =
   process.env.ARCHIVED_USER_EMAIL?.trim().toLowerCase() || "archived-user@local.invalid";
 const ARCHIVED_USER_NAME =
@@ -401,14 +402,22 @@ function formatOrderForFrontend(order, ingredientMap) {
       .filter(Boolean)
       .map((ingredient) => ({ id: ingredient.id, name: ingredient.name }));
 
-    const productPayload = {
-      id: item.product.id,
-      name: item.product.name,
-      basePrice: Number(item.product.basePrice),
-      category: item.product.category
-        ? { id: item.product.category.id, name: item.product.category.name }
-        : null,
-    };
+    const productPayload = item.product
+      ? {
+          id: item.product.id,
+          name: item.product.name,
+          basePrice: Number(item.product.basePrice),
+          category: item.product.category
+            ? { id: item.product.category.id, name: item.product.category.name }
+            : null,
+        }
+      : {
+          id: item.productId ?? null,
+          name: DELETED_PRODUCT_FALLBACK_NAME,
+          basePrice: Number(item.unitPrice),
+          category: null,
+          archived: true,
+        };
 
     return {
       id: item.id,
