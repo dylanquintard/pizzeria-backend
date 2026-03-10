@@ -393,13 +393,17 @@ async function getOrdersAdmin(filters = {}) {
     const endOfDay = new Date(startOfDay);
     endOfDay.setHours(23, 59, 59, 999);
 
-    where.createdAt = { gte: startOfDay, lte: endOfDay };
+    where.timeSlot = {
+      is: {
+        startTime: { gte: startOfDay, lte: endOfDay },
+      },
+    };
   }
 
   const orders = await prisma.order.findMany({
     where,
     include: ORDER_INCLUDE,
-    orderBy: [{ createdAt: "desc" }],
+    orderBy: [{ timeSlot: { startTime: "asc" } }, { createdAt: "desc" }],
   });
 
   return formatOrderCollection(orders);
