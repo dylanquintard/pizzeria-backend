@@ -17,6 +17,12 @@ router.put(
   adminMiddleware,
   timeSlotController.upsertWeeklySetting
 );
+router.delete(
+  "/weekly-settings/:dayOfWeek/service",
+  authMiddleware,
+  adminMiddleware,
+  timeSlotController.removeWeeklyService
+);
 
 router.get("/availability", authMiddleware, timeSlotController.getPickupAvailability);
 

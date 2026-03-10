@@ -39,6 +39,25 @@ async function upsertWeeklySetting(req, res) {
   }
 }
 
+async function removeWeeklyService(req, res) {
+  try {
+    const setting = await timeSlotService.removeWeeklyService(
+      req.params.dayOfWeek,
+      req.body || {}
+    );
+
+    emitRealtimeEvent("timeslots:updated", {
+      type: "timeslot-weekly-service-removed",
+      dayOfWeek: setting?.dayOfWeek || String(req.params.dayOfWeek || "").toUpperCase(),
+      isOpen: Boolean(setting?.isOpen),
+    });
+
+    res.json(setting);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 async function getPickupAvailability(req, res) {
   try {
     const availability = await timeSlotService.getPickupAvailability(req.query);
@@ -52,5 +71,6 @@ module.exports = {
   getWeeklySettings,
   getPublicWeeklySettings,
   upsertWeeklySetting,
+  removeWeeklyService,
   getPickupAvailability,
 };

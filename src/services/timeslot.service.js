@@ -85,37 +85,121 @@ function buildTemplateRows({
   return rows;
 }
 
-function buildWeeklySetting(dayOfWeek, slots) {
-  if (!Array.isArray(slots) || slots.length === 0) {
-    return {
-      dayOfWeek,
-      isOpen: false,
-      startTime: null,
-      endTime: null,
-      slotDuration: null,
-      maxPizzas: null,
-      locationId: null,
-      location: null,
-      slotsCount: 0,
+function closedSetting(dayOfWeek) {
+  return {
+    dayOfWeek,
+    isOpen: false,
+    startTime: null,
+    endTime: null,
+    slotDuration: null,
+    maxPizzas: null,
+    locationId: null,
+    location: null,
+    slotsCount: 0,
+    services: [],
+  };
+}
+
+function buildServiceEntries(dayOfWeek, slots) {
+  if (!Array.isArray(slots) || slots.length === 0) return [];
+
+  const ordered = [...slots].sort((a, b) => {
+    const startDiff = new Date(a.startTime) - new Date(b.startTime);
+    if (startDiff !== 0) return startDiff;
+    const locationDiff = Number(a.locationId || 0) - Number(b.locationId || 0);
+    if (locationDiff !== 0) return locationDiff;
+    return Number(a.id || 0) - Number(b.id || 0);
+  });
+
+  const services = [];
+  let current = null;
+
+  for (const slot of ordered) {
+    const slotStart = new Date(slot.startTime);
+    const slotEnd = new Date(slot.endTime);
+    const slotDuration = Math.max(1, minutesBetween(slot.startTime, slot.endTime));
+
+    const canMerge =
+      current &&
+      Number(current.locationId || 0) === Number(slot.locationId || 0) &&
+      Number(current.maxPizzas || 0) === Number(slot.maxPizzas || 0) &&
+      Number(current.slotDuration || 0) === Number(slotDuration || 0) &&
+      current._lastEnd.getTime() === slotStart.getTime();
+
+    if (canMerge) {
+      current.endTime = formatTimeValue(slotEnd);
+      current.slotsCount += 1;
+      current._lastEnd = slotEnd;
+      continue;
+    }
+
+    if (current) {
+      delete current._lastEnd;
+      services.push(current);
+    }
+
+    current = {
+      id: `${dayOfWeek}-${slot.locationId || "none"}-${formatTimeValue(slotStart)}-${formatTimeValue(slotEnd)}-${slot.maxPizzas}-${slotDuration}`,
+      startTime: formatTimeValue(slotStart),
+      endTime: formatTimeValue(slotEnd),
+      slotDuration,
+      maxPizzas: slot.maxPizzas,
+      locationId: slot.locationId,
+      location: slot.location || null,
+      slotsCount: 1,
+      _lastEnd: slotEnd,
     };
   }
 
-  const ordered = [...slots].sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-  const first = ordered[0];
-  const last = ordered[ordered.length - 1];
-  const slotDuration = Math.max(1, minutesBetween(first.startTime, first.endTime));
+  if (current) {
+    delete current._lastEnd;
+    services.push(current);
+  }
+
+  return services;
+}
+
+function buildWeeklySetting(dayOfWeek, slots) {
+  const services = buildServiceEntries(dayOfWeek, slots);
+  if (services.length === 0) return closedSetting(dayOfWeek);
+
+  const first = services[0];
+  const totalSlots = services.reduce(
+    (sum, entry) => sum + Number(entry.slotsCount || 0),
+    0
+  );
 
   return {
     dayOfWeek,
     isOpen: true,
-    startTime: formatTimeValue(first.startTime),
-    endTime: formatTimeValue(last.endTime),
-    slotDuration,
+    startTime: first.startTime,
+    endTime: first.endTime,
+    slotDuration: first.slotDuration,
     maxPizzas: first.maxPizzas,
     locationId: first.locationId,
     location: first.location || null,
-    slotsCount: ordered.length,
+    slotsCount: totalSlots,
+    services,
   };
+}
+
+async function getWeeklySettingByDay(dayOfWeek) {
+  const parsedDay = parseDayOfWeek(dayOfWeek);
+  const anchorDate = getAnchorDateForDay(parsedDay);
+  const range = getDateRange(anchorDate);
+
+  const slots = await prisma.timeSlot.findMany({
+    where: {
+      serviceDate: {
+        gte: range.start,
+        lt: range.end,
+      },
+    },
+    include: { location: true },
+    orderBy: [{ startTime: "asc" }, { id: "asc" }],
+  });
+
+  return buildWeeklySetting(parsedDay, slots);
 }
 
 async function getWeeklySettings() {
@@ -175,6 +259,29 @@ async function upsertWeeklySetting(dayOfWeek, payload = {}) {
 
   await assertLocationExists(locationId);
 
+  const serviceStart = buildDateTime(anchorDate, payload.startTime, "startTime");
+  const serviceEnd = buildDateTime(anchorDate, payload.endTime, "endTime");
+  if (serviceEnd <= serviceStart) {
+    throw new Error("endTime must be after startTime");
+  }
+
+  const overlapCount = await prisma.timeSlot.count({
+    where: {
+      serviceDate: {
+        gte: range.start,
+        lt: range.end,
+      },
+      locationId,
+      startTime: { lt: serviceEnd },
+      endTime: { gt: serviceStart },
+    },
+  });
+  if (overlapCount > 0) {
+    throw new Error(
+      "Un service existe deja sur ce meme emplacement et ce meme horaire."
+    );
+  }
+
   const templateRows = buildTemplateRows({
     dayOfWeek: parsedDay,
     startTime: payload.startTime,
@@ -184,22 +291,46 @@ async function upsertWeeklySetting(dayOfWeek, payload = {}) {
     locationId,
   });
 
-  await prisma.$transaction(async (tx) => {
-    await tx.timeSlot.deleteMany({
-      where: {
-        serviceDate: {
-          gte: range.start,
-          lt: range.end,
-        },
-      },
-    });
+  await prisma.timeSlot.createMany({ data: templateRows });
+  return getWeeklySettingByDay(parsedDay);
+}
 
-    await tx.timeSlot.createMany({ data: templateRows });
+async function removeWeeklyService(dayOfWeek, payload = {}) {
+  const parsedDay = parseDayOfWeek(dayOfWeek);
+  const anchorDate = getAnchorDateForDay(parsedDay);
+  const range = getDateRange(anchorDate);
+
+  if (!payload.startTime) throw new Error("startTime is required");
+  if (!payload.endTime) throw new Error("endTime is required");
+
+  const locationId = parseOptionalPositiveInt(payload.locationId, "locationId");
+  if (!locationId) {
+    throw new Error("locationId is required");
+  }
+
+  const serviceStart = buildDateTime(anchorDate, payload.startTime, "startTime");
+  const serviceEnd = buildDateTime(anchorDate, payload.endTime, "endTime");
+  if (serviceEnd <= serviceStart) {
+    throw new Error("endTime must be after startTime");
+  }
+
+  const deleted = await prisma.timeSlot.deleteMany({
+    where: {
+      serviceDate: {
+        gte: range.start,
+        lt: range.end,
+      },
+      locationId,
+      startTime: { gte: serviceStart },
+      endTime: { lte: serviceEnd },
+    },
   });
 
-  const location = await prisma.location.findUnique({ where: { id: locationId } });
-  const createdSlots = templateRows.map((slot) => ({ ...slot, location }));
-  return buildWeeklySetting(parsedDay, createdSlots);
+  if (deleted.count === 0) {
+    throw new Error("Service introuvable pour ce jour");
+  }
+
+  return getWeeklySettingByDay(parsedDay);
 }
 
 function buildConcreteReservationMap(slots = []) {
@@ -402,6 +533,7 @@ async function findOrCreateConcreteSlotForPickup(
 module.exports = {
   getWeeklySettings,
   upsertWeeklySetting,
+  removeWeeklyService,
   getPickupAvailability,
   getTemplateSlotForPickupSelection,
   findOrCreateConcreteSlotForPickup,

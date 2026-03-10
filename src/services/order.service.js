@@ -45,6 +45,20 @@ function getOrderProductsCount(order) {
   return order.items.reduce((sum, item) => sum + item.quantity, 0);
 }
 
+function formatPickupAddress(location) {
+  if (!location) return "";
+  const cityLine = `${location.postalCode || ""} ${location.city || ""}`.trim();
+  return [location.addressLine1, cityLine].filter(Boolean).join(", ");
+}
+
+function formatPickupTimeForEmail(dateValue) {
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return "";
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}h${minutes}`;
+}
+
 async function recalculateTotal(client, orderId) {
   const items = await client.orderItem.findMany({
     where: { orderId },
@@ -517,6 +531,31 @@ async function updateOrderStatusAdmin(orderId, status) {
   return formatSingleOrder(updatedOrder);
 }
 
+async function getOrderConfirmationEmailData(orderId) {
+  const parsedOrderId = parsePositiveInt(orderId, "orderId");
+
+  const order = await prisma.order.findUnique({
+    where: { id: parsedOrderId },
+    include: {
+      user: { select: { email: true, name: true } },
+      timeSlot: { include: { location: true } },
+    },
+  });
+
+  if (!order) return null;
+
+  return {
+    orderId: order.id,
+    toEmail: order.user?.email || null,
+    customerName: order.user?.name || "",
+    pickupTimeLabel: order.timeSlot?.startTime
+      ? formatPickupTimeForEmail(order.timeSlot.startTime)
+      : "",
+    pickupLocationName: order.timeSlot?.location?.name || "",
+    pickupAddress: formatPickupAddress(order.timeSlot?.location),
+  };
+}
+
 module.exports = {
   getCartByUserId,
   addToCart,
@@ -526,4 +565,5 @@ module.exports = {
   getOrderById,
   updateOrderStatusAdmin,
   deleteOrder,
+  getOrderConfirmationEmailData,
 };

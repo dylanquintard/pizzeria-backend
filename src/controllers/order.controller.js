@@ -1,4 +1,5 @@
 const orderService = require("../services/order.service");
+const orderEmailService = require("../services/order-email.service");
 const { emitRealtimeEvent } = require("../lib/realtime");
 
 function getUserId(req) {
@@ -111,6 +112,15 @@ async function finalizeOrder(req, res) {
       orderId: order?.id || null,
       timeSlotId: order?.timeSlot?.id || null,
     });
+
+    try {
+      const emailData = await orderService.getOrderConfirmationEmailData(order?.id);
+      if (emailData?.toEmail) {
+        await orderEmailService.sendOrderConfirmationEmail(emailData);
+      }
+    } catch (mailErr) {
+      console.error("finalizeOrder email error:", mailErr);
+    }
 
     res.json(order);
   } catch (err) {
