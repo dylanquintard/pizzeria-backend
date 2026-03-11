@@ -1512,6 +1512,14 @@ async function runPrintSchedulerTick() {
 
   const readyToFailed = readyToFailedReprints.count + readyToFailedPrimary.count;
 
+  const printedReprintsDeleted = await prisma.printJob.deleteMany({
+    where: {
+      status: PrintJobStatus.PRINTED,
+      reprintOfJobId: { not: null },
+      printedAt: { lte: now },
+    },
+  });
+
   const staleAgentThreshold = new Date(now.getTime() - PRINT_AGENT_OFFLINE_AFTER_MS);
   const staleAgentsToOffline = await prisma.printAgent.updateMany({
     where: {
@@ -1552,6 +1560,7 @@ async function runPrintSchedulerTick() {
     ready_to_failed: readyToFailed,
     ready_to_failed_reprints: readyToFailedReprints.count,
     ready_to_failed_primary: readyToFailedPrimary.count,
+    printed_reprints_deleted: printedReprintsDeleted.count,
     stale_agents_to_offline: staleAgentsToOffline.count,
     printed_deleted,
   };
