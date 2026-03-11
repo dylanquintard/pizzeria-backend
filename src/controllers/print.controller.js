@@ -69,6 +69,15 @@ async function getPrintJobsAdmin(req, res) {
   }
 }
 
+async function getPrintOverviewAdmin(req, res) {
+  try {
+    const overview = await printService.getPrintOverview(req.query || {});
+    res.json(overview);
+  } catch (err) {
+    sendError(res, err, 500);
+  }
+}
+
 async function reprintJobAdmin(req, res) {
   try {
     const result = await printService.reprintJob(req.params.jobId, req.body || {});
@@ -138,6 +147,7 @@ module.exports = {
   markJobSuccess,
   markJobFail,
   getPrintJobsAdmin,
+  getPrintOverviewAdmin,
   reprintJobAdmin,
   getAgentsAdmin,
   upsertAgentAdmin,

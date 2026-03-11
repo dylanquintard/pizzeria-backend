@@ -1025,6 +1025,136 @@ async function getPrintJobs(filters = {}) {
   });
 }
 
+async function getPrintOverview(filters = {}) {
+  const heartbeatStaleMinutes = parseBoundedInt(
+    filters.heartbeatStaleMinutes,
+    "heartbeatStaleMinutes",
+    1,
+    120,
+    3
+  );
+
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - heartbeatStaleMinutes * 60_000);
+  const failedSince = new Date(now.getTime() - 24 * 60 * 60_000);
+
+  const [jobGroups, failedLast24h, agents, printers] = await Promise.all([
+    prisma.printJob.groupBy({
+      by: ["status"],
+      _count: { _all: true },
+    }),
+    prisma.printJob.count({
+      where: {
+        status: PrintJobStatus.FAILED,
+        updatedAt: { gte: failedSince },
+      },
+    }),
+    prisma.printAgent.findMany({
+      include: {
+        printers: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            isActive: true,
+          },
+          orderBy: { code: "asc" },
+        },
+      },
+      orderBy: { code: "asc" },
+    }),
+    prisma.printer.findMany({
+      include: {
+        agent: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            status: true,
+            lastHeartbeatAt: true,
+          },
+        },
+      },
+      orderBy: { code: "asc" },
+    }),
+  ]);
+
+  const jobsByStatus = Object.values(PrintJobStatus).reduce((acc, status) => {
+    acc[status] = 0;
+    return acc;
+  }, {});
+
+  for (const group of jobGroups) {
+    jobsByStatus[group.status] = group?._count?._all || 0;
+  }
+
+  const agentAlerts = [];
+  const printerAlerts = [];
+
+  for (const agent of agents) {
+    const staleHeartbeat = !agent.lastHeartbeatAt || agent.lastHeartbeatAt < staleBefore;
+    const statusIssue = [PrintAgentStatus.DEGRADED, PrintAgentStatus.OFFLINE].includes(agent.status);
+    const metadataPrinters = Array.isArray(agent?.metadata?.printers) ? agent.metadata.printers : [];
+
+    if (statusIssue || staleHeartbeat) {
+      agentAlerts.push({
+        code: agent.code,
+        name: agent.name,
+        status: agent.status,
+        lastHeartbeatAt: agent.lastHeartbeatAt,
+        staleHeartbeat,
+      });
+    }
+
+    for (const entry of metadataPrinters) {
+      if (!entry || typeof entry !== "object") continue;
+      const online = entry.online !== false;
+      const paperOk = entry.paper_ok !== false;
+      if (!online || !paperOk) {
+        printerAlerts.push({
+          agentCode: agent.code,
+          printerCode: String(entry.code || "").trim() || null,
+          online,
+          paperOk,
+        });
+      }
+    }
+  }
+
+  const inactivePrinters = printers.filter((printer) => printer.isActive === false).map((printer) => ({
+    code: printer.code,
+    name: printer.name,
+    isActive: printer.isActive,
+    agentCode: printer.agent?.code || null,
+  }));
+
+  return {
+    generatedAt: now.toISOString(),
+    heartbeatStaleMinutes,
+    jobs: {
+      total: Object.values(jobsByStatus).reduce((sum, value) => sum + Number(value || 0), 0),
+      byStatus: jobsByStatus,
+      failedLast24h,
+    },
+    agents: {
+      total: agents.length,
+      online: agents.filter((agent) => agent.status === PrintAgentStatus.ONLINE).length,
+      degraded: agents.filter((agent) => agent.status === PrintAgentStatus.DEGRADED).length,
+      offline: agents.filter((agent) => agent.status === PrintAgentStatus.OFFLINE).length,
+      alerts: agentAlerts,
+    },
+    printers: {
+      total: printers.length,
+      active: printers.filter((printer) => printer.isActive).length,
+      inactive: inactivePrinters.length,
+      alerts: {
+        metadataIssues: printerAlerts,
+        inactive: inactivePrinters,
+      },
+    },
+  };
+}
+
 async function reprintJob(jobId, payload = {}) {
   const sourceJobId = normalizeRequiredText(jobId, "jobId", 128);
   const copies = parseBoundedInt(payload.copies, "copies", 1, 5, 1);
@@ -1154,6 +1284,7 @@ module.exports = {
   markPrintJobSuccess,
   markPrintJobFailure,
   getPrintJobs,
+  getPrintOverview,
   reprintJob,
   enqueueOrderTicketForOrderId,
   runPrintSchedulerTick,

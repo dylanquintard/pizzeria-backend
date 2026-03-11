@@ -26,6 +26,7 @@ router.post(
 );
 
 router.get("/admin/jobs", authMiddleware, adminMiddleware, printController.getPrintJobsAdmin);
+router.get("/admin/overview", authMiddleware, adminMiddleware, printController.getPrintOverviewAdmin);
 router.post(
   "/admin/jobs/:jobId/reprint",
   authMiddleware,
