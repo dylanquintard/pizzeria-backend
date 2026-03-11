@@ -15,6 +15,8 @@ const {
   PRINT_RETRY_MAX_SECONDS,
   PRINT_DEFAULT_MAX_ATTEMPTS,
   PRINT_AGENT_OFFLINE_AFTER_MS,
+  PRINT_JOB_RETENTION_HOURS,
+  PRINT_JOB_CLEANUP_INTERVAL_MS,
 } = require("../lib/env");
 const { normalizeCustomizations } = require("../utils/customizations");
 const { DELETED_PRODUCT_FALLBACK_NAME } = require("../utils/product");
@@ -50,6 +52,7 @@ const ORDER_TICKET_INCLUDE = {
 };
 
 let schedulerTimer = null;
+let lastPrintJobCleanupAtMs = 0;
 
 function createError(message, status = 400, code = "VALIDATION_ERROR") {
   const err = new Error(message);
@@ -1383,6 +1386,7 @@ async function reprintJob(jobId, payload = {}) {
 
 async function runPrintSchedulerTick() {
   const now = new Date();
+  const nowMs = now.getTime();
 
   const pendingToReady = await prisma.printJob.updateMany({
     where: {
@@ -1440,11 +1444,29 @@ async function runPrintSchedulerTick() {
     },
   });
 
+  let printed_deleted = 0;
+  const cleanupIsDue =
+    lastPrintJobCleanupAtMs <= 0 ||
+    nowMs - lastPrintJobCleanupAtMs >= PRINT_JOB_CLEANUP_INTERVAL_MS;
+
+  if (cleanupIsDue) {
+    const printedCutoff = new Date(nowMs - PRINT_JOB_RETENTION_HOURS * 60 * 60 * 1000);
+    const cleanupResult = await prisma.printJob.deleteMany({
+      where: {
+        status: PrintJobStatus.PRINTED,
+        printedAt: { lte: printedCutoff },
+      },
+    });
+    printed_deleted = cleanupResult.count;
+    lastPrintJobCleanupAtMs = nowMs;
+  }
+
   return {
     pending_to_ready: pendingToReady.count,
     retry_to_ready: retryToReady.count,
     stale_reclaimed: reclaimStale.count,
     stale_agents_to_offline: staleAgentsToOffline.count,
+    printed_deleted,
   };
 }
 
@@ -1474,6 +1496,7 @@ function stopPrintScheduler() {
   if (!schedulerTimer) return;
   clearInterval(schedulerTimer);
   schedulerTimer = null;
+  lastPrintJobCleanupAtMs = 0;
 }
 
 module.exports = {

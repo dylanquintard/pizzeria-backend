@@ -237,6 +237,7 @@ model PrintJob {
   updatedAt        DateTime          @updatedAt
 
   @@index([status, scheduledAt, nextRetryAt, priority, createdAt])
+  @@index([status, printedAt])
   @@index([claimedByAgentId, status, lockedUntil])
   @@index([orderId, createdAt])
 }
