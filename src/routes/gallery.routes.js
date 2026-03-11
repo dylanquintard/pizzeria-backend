@@ -37,6 +37,12 @@ router.patch(
   adminMiddleware,
   galleryController.activateGalleryImage
 );
+router.patch(
+  "/:id/home-background",
+  authMiddleware,
+  adminMiddleware,
+  galleryController.setGalleryHomeBackground
+);
 router.delete(
   "/:id",
   authMiddleware,

@@ -19,12 +19,12 @@ function parsePositiveInt(value, fieldName) {
   return parsed;
 }
 
-function parseOptionalBoolean(value) {
+function parseOptionalBoolean(value, fieldName = "active") {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value === "boolean") return value;
   if (value === "true") return true;
   if (value === "false") return false;
-  throw new Error("active must be a boolean");
+  throw new Error(`${fieldName} must be a boolean`);
 }
 
 function parseSortOrder(value) {
@@ -173,17 +173,33 @@ async function getGalleryImageById(id) {
 
 async function createGalleryImage(data) {
   const imageUrl = parseImageUrl(data.imageUrl);
+  const isHomeBackground = parseOptionalBoolean(
+    data.isHomeBackground,
+    "isHomeBackground"
+  );
+  const activeValue = parseOptionalBoolean(data.active, "active");
+  const active = isHomeBackground ? true : activeValue ?? true;
 
-  return prisma.homeGalleryImage.create({
-    data: {
-      imageUrl,
-      thumbnailUrl: parseOptionalString(data.thumbnailUrl) ?? imageUrl,
-      title: parseOptionalString(data.title),
-      description: parseOptionalString(data.description),
-      altText: parseOptionalString(data.altText),
-      sortOrder: parseSortOrder(data.sortOrder) ?? 0,
-      active: parseOptionalBoolean(data.active) ?? true,
-    },
+  return prisma.$transaction(async (tx) => {
+    if (isHomeBackground) {
+      await tx.homeGalleryImage.updateMany({
+        where: { isHomeBackground: true },
+        data: { isHomeBackground: false },
+      });
+    }
+
+    return tx.homeGalleryImage.create({
+      data: {
+        imageUrl,
+        thumbnailUrl: parseOptionalString(data.thumbnailUrl) ?? imageUrl,
+        title: parseOptionalString(data.title),
+        description: parseOptionalString(data.description),
+        altText: parseOptionalString(data.altText),
+        sortOrder: parseSortOrder(data.sortOrder) ?? 0,
+        active,
+        isHomeBackground: isHomeBackground ?? false,
+      },
+    });
   });
 }
 
@@ -194,25 +210,75 @@ async function updateGalleryImage(id, data) {
   });
   if (!existing) throw new Error("Gallery image not found");
 
-  return prisma.homeGalleryImage.update({
-    where: { id: imageId },
-    data: {
-      imageUrl: data.imageUrl !== undefined ? parseImageUrl(data.imageUrl) : undefined,
-      thumbnailUrl: parseOptionalString(data.thumbnailUrl),
-      title: parseOptionalString(data.title),
-      description: parseOptionalString(data.description),
-      altText: parseOptionalString(data.altText),
-      sortOrder: parseSortOrder(data.sortOrder),
-      active: parseOptionalBoolean(data.active),
-    },
+  const isHomeBackground = parseOptionalBoolean(
+    data.isHomeBackground,
+    "isHomeBackground"
+  );
+  const activeValue = parseOptionalBoolean(data.active, "active");
+  const active = isHomeBackground ? true : activeValue;
+  const nextIsHomeBackground =
+    isHomeBackground !== undefined
+      ? isHomeBackground
+      : active === false
+        ? false
+        : undefined;
+
+  return prisma.$transaction(async (tx) => {
+    if (isHomeBackground) {
+      await tx.homeGalleryImage.updateMany({
+        where: { isHomeBackground: true, id: { not: imageId } },
+        data: { isHomeBackground: false },
+      });
+    }
+
+    return tx.homeGalleryImage.update({
+      where: { id: imageId },
+      data: {
+        imageUrl: data.imageUrl !== undefined ? parseImageUrl(data.imageUrl) : undefined,
+        thumbnailUrl: parseOptionalString(data.thumbnailUrl),
+        title: parseOptionalString(data.title),
+        description: parseOptionalString(data.description),
+        altText: parseOptionalString(data.altText),
+        sortOrder: parseSortOrder(data.sortOrder),
+        active,
+        isHomeBackground: nextIsHomeBackground,
+      },
+    });
   });
 }
 
 async function activateGalleryImage(id, active) {
   const imageId = parsePositiveInt(id, "id");
+  const isActive = parseOptionalBoolean(active, "active") ?? false;
+
   return prisma.homeGalleryImage.update({
     where: { id: imageId },
-    data: { active: parseOptionalBoolean(active) ?? false },
+    data: {
+      active: isActive,
+      isHomeBackground: isActive ? undefined : false,
+    },
+  });
+}
+
+async function setHomeBackground(id) {
+  const imageId = parsePositiveInt(id, "id");
+  const existing = await prisma.homeGalleryImage.findUnique({
+    where: { id: imageId },
+  });
+  if (!existing) throw new Error("Gallery image not found");
+
+  return prisma.$transaction(async (tx) => {
+    await tx.homeGalleryImage.updateMany({
+      where: { isHomeBackground: true },
+      data: { isHomeBackground: false },
+    });
+    return tx.homeGalleryImage.update({
+      where: { id: imageId },
+      data: {
+        isHomeBackground: true,
+        active: true,
+      },
+    });
   });
 }
 
@@ -235,5 +301,6 @@ module.exports = {
   createGalleryImage,
   updateGalleryImage,
   activateGalleryImage,
+  setHomeBackground,
   deleteGalleryImage,
 };

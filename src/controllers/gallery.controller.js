@@ -107,6 +107,16 @@ async function activateGalleryImage(req, res) {
   }
 }
 
+async function setGalleryHomeBackground(req, res) {
+  try {
+    const image = await galleryService.setHomeBackground(req.params.id);
+    res.json(image);
+  } catch (err) {
+    const status = err.message === "Gallery image not found" ? 404 : 400;
+    res.status(status).json({ error: err.message });
+  }
+}
+
 async function deleteGalleryImage(req, res) {
   try {
     await galleryService.deleteGalleryImage(req.params.id);
@@ -125,5 +135,6 @@ module.exports = {
   createGalleryImage,
   updateGalleryImage,
   activateGalleryImage,
+  setGalleryHomeBackground,
   deleteGalleryImage,
 };
