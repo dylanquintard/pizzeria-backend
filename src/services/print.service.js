@@ -206,6 +206,49 @@ function computeScheduledAt(startTime, forceNow = false) {
   return target > now ? target : now;
 }
 
+function isAgentHeartbeatStale(lastHeartbeatAt) {
+  if (!lastHeartbeatAt) return true;
+  const staleThreshold = Date.now() - PRINT_AGENT_OFFLINE_AFTER_MS;
+  return new Date(lastHeartbeatAt).getTime() < staleThreshold;
+}
+
+function getPrinterRuntimeStatus(printer) {
+  const agent = printer?.agent || null;
+  const metadataPrinters = Array.isArray(agent?.metadata?.printers)
+    ? agent.metadata.printers
+    : [];
+
+  const metadataEntry = metadataPrinters.find(
+    (entry) => entry && String(entry.code || "").trim().toLowerCase() === String(printer.code || "").trim().toLowerCase()
+  ) || null;
+
+  const heartbeatStale = isAgentHeartbeatStale(agent?.lastHeartbeatAt);
+  const reportedOnline = metadataEntry ? metadataEntry.online !== false : null;
+  const paperOk = metadataEntry ? metadataEntry.paper_ok !== false : null;
+
+  let status = "UNKNOWN";
+  if (!printer?.isActive) {
+    status = "INACTIVE";
+  } else if (!agent) {
+    status = "UNASSIGNED";
+  } else if (heartbeatStale || agent.status === PrintAgentStatus.OFFLINE) {
+    status = "OFFLINE";
+  } else if (reportedOnline === false || paperOk === false) {
+    status = "DEGRADED";
+  } else if (reportedOnline === true) {
+    status = "ONLINE";
+  }
+
+  return {
+    status,
+    heartbeatStale,
+    reportedOnline,
+    paperOk,
+    lastHeartbeatAt: agent?.lastHeartbeatAt || null,
+    agentStatus: agent?.status || null,
+  };
+}
+
 function getAgentStatusWeight(status) {
   if (status === PrintAgentStatus.ONLINE) return 0;
   if (status === PrintAgentStatus.DEGRADED) return 1;
@@ -654,7 +697,7 @@ async function deletePrintAgent(agentCode) {
 }
 
 async function getPrinters() {
-  return prisma.printer.findMany({
+  const printers = await prisma.printer.findMany({
     include: {
       agent: {
         select: {
@@ -663,6 +706,7 @@ async function getPrinters() {
           name: true,
           status: true,
           lastHeartbeatAt: true,
+          metadata: true,
         },
       },
       location: {
@@ -678,6 +722,11 @@ async function getPrinters() {
     },
     orderBy: { code: "asc" },
   });
+
+  return printers.map((printer) => ({
+    ...printer,
+    runtime: getPrinterRuntimeStatus(printer),
+  }));
 }
 
 async function upsertPrinter(payload = {}) {
