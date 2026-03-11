@@ -114,6 +114,15 @@ async function rotateAgentTokenAdmin(req, res) {
   }
 }
 
+async function deleteAgentAdmin(req, res) {
+  try {
+    const result = await printService.deletePrintAgent(req.params.agentCode);
+    res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+}
+
 async function getPrintersAdmin(_req, res) {
   try {
     const printers = await printService.getPrinters();
@@ -127,6 +136,15 @@ async function upsertPrinterAdmin(req, res) {
   try {
     const printer = await printService.upsertPrinter(req.body || {});
     res.status(201).json(printer);
+  } catch (err) {
+    sendError(res, err);
+  }
+}
+
+async function deletePrinterAdmin(req, res) {
+  try {
+    const result = await printService.deletePrinter(req.params.printerCode);
+    res.json(result);
   } catch (err) {
     sendError(res, err);
   }
@@ -152,7 +170,9 @@ module.exports = {
   getAgentsAdmin,
   upsertAgentAdmin,
   rotateAgentTokenAdmin,
+  deleteAgentAdmin,
   getPrintersAdmin,
   upsertPrinterAdmin,
+  deletePrinterAdmin,
   schedulerTickAdmin,
 };

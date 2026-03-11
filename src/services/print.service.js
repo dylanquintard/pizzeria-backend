@@ -214,6 +214,26 @@ function computeScheduledAt(startTime, forceNow = false) {
   return target > now ? target : now;
 }
 
+function getAgentStatusWeight(status) {
+  if (status === PrintAgentStatus.ONLINE) return 0;
+  if (status === PrintAgentStatus.DEGRADED) return 1;
+  if (status === PrintAgentStatus.OFFLINE) return 2;
+  return 3;
+}
+
+function pickBestPrinter(printers) {
+  const candidates = (Array.isArray(printers) ? printers : []).filter((entry) => entry?.isActive);
+  if (candidates.length === 0) return null;
+
+  candidates.sort((left, right) => {
+    const weightDiff = getAgentStatusWeight(left?.agent?.status) - getAgentStatusWeight(right?.agent?.status);
+    if (weightDiff !== 0) return weightDiff;
+    return Number(left?.id || 0) - Number(right?.id || 0);
+  });
+
+  return candidates[0] || null;
+}
+
 async function findPrinterForOrder(client, locationId, forcedPrinterId = null) {
   if (forcedPrinterId) {
     return client.printer.findFirst({
@@ -225,31 +245,61 @@ async function findPrinterForOrder(client, locationId, forcedPrinterId = null) {
   }
 
   if (locationId) {
-    const locationPrinter = await client.printer.findFirst({
+    const locationPrinters = await client.printer.findMany({
       where: {
         isActive: true,
         locationId,
       },
-      orderBy: { id: "asc" },
+      include: {
+        agent: {
+          select: {
+            id: true,
+            status: true,
+          },
+        },
+      },
     });
-    if (locationPrinter) return locationPrinter;
+    const bestLocationPrinter = pickBestPrinter(locationPrinters);
+    if (bestLocationPrinter) return bestLocationPrinter;
   }
 
-  const globalPrinter = await client.printer.findFirst({
+  const globalPrinters = await client.printer.findMany({
     where: {
       isActive: true,
       locationId: null,
     },
-    orderBy: { id: "asc" },
+    include: {
+      agent: {
+        select: {
+          id: true,
+          status: true,
+        },
+      },
+    },
   });
-  if (globalPrinter) return globalPrinter;
+  const bestGlobalPrinter = pickBestPrinter(globalPrinters);
+  if (bestGlobalPrinter) return bestGlobalPrinter;
 
-  return client.printer.findFirst({
+  // Safe fallback when only one printer exists in the whole fleet.
+  const allActivePrinters = await client.printer.findMany({
     where: {
       isActive: true,
     },
-    orderBy: { id: "asc" },
+    include: {
+      agent: {
+        select: {
+          id: true,
+          status: true,
+        },
+      },
+    },
   });
+
+  if (allActivePrinters.length === 1) {
+    return allActivePrinters[0];
+  }
+
+  return null;
 }
 
 function createPrimaryIdempotencyKey(orderId, printerId) {
@@ -496,6 +546,16 @@ async function getPrintAgents() {
   return prisma.printAgent.findMany({
     include: {
       printers: {
+        include: {
+          location: {
+            select: {
+              id: true,
+              name: true,
+              city: true,
+              active: true,
+            },
+          },
+        },
         orderBy: { code: "asc" },
       },
     },
@@ -576,6 +636,30 @@ async function rotatePrintAgentToken(agentCode) {
   return {
     agent: updated,
     token: rawToken,
+  };
+}
+
+async function deletePrintAgent(agentCode) {
+  const code = normalizeCode(agentCode, "agentCode");
+  const existing = await prisma.printAgent.findUnique({ where: { code } });
+
+  if (!existing) {
+    throw createError("Print agent not found", 404, "PRINT_AGENT_NOT_FOUND");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.printer.updateMany({
+      where: { agentId: existing.id },
+      data: { agentId: null },
+    });
+    await tx.printAgent.delete({
+      where: { id: existing.id },
+    });
+  });
+
+  return {
+    ok: true,
+    deletedCode: code,
   };
 }
 
@@ -667,6 +751,47 @@ async function upsertPrinter(payload = {}) {
       locationId,
     },
   });
+}
+
+async function deletePrinter(printerCode) {
+  const code = normalizeCode(printerCode, "printerCode");
+  const existing = await prisma.printer.findUnique({ where: { code } });
+
+  if (!existing) {
+    throw createError("Printer not found", 404, "PRINTER_NOT_FOUND");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.printJob.updateMany({
+      where: {
+        printerId: existing.id,
+        status: {
+          in: [
+            PrintJobStatus.PENDING,
+            PrintJobStatus.READY,
+            PrintJobStatus.CLAIMED,
+            PrintJobStatus.PRINTING,
+            PrintJobStatus.RETRY_WAITING,
+          ],
+        },
+      },
+      data: {
+        status: PrintJobStatus.CANCELLED,
+        cancelledAt: new Date(),
+        lastErrorCode: "PRINTER_REMOVED",
+        lastErrorMessage: "Printer removed by admin",
+      },
+    });
+
+    await tx.printer.delete({
+      where: { id: existing.id },
+    });
+  });
+
+  return {
+    ok: true,
+    deletedCode: code,
+  };
 }
 
 async function updatePrintAgentHeartbeat(agent, heartbeatPayload = {}, requestIp = null) {
@@ -1277,8 +1402,10 @@ module.exports = {
   getPrintAgents,
   upsertPrintAgent,
   rotatePrintAgentToken,
+  deletePrintAgent,
   getPrinters,
   upsertPrinter,
+  deletePrinter,
   updatePrintAgentHeartbeat,
   claimNextPrintJob,
   markPrintJobSuccess,

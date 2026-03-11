@@ -48,6 +48,12 @@ router.post(
   adminMiddleware,
   printController.rotateAgentTokenAdmin
 );
+router.delete(
+  "/admin/agents/:agentCode",
+  authMiddleware,
+  adminMiddleware,
+  printController.deleteAgentAdmin
+);
 
 router.get("/admin/printers", authMiddleware, adminMiddleware, printController.getPrintersAdmin);
 router.post(
@@ -55,6 +61,12 @@ router.post(
   authMiddleware,
   adminMiddleware,
   printController.upsertPrinterAdmin
+);
+router.delete(
+  "/admin/printers/:printerCode",
+  authMiddleware,
+  adminMiddleware,
+  printController.deletePrinterAdmin
 );
 
 module.exports = router;
