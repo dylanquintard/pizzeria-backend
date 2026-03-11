@@ -17,6 +17,8 @@ const {
   PRINT_AGENT_OFFLINE_AFTER_MS,
   PRINT_JOB_RETENTION_HOURS,
   PRINT_JOB_CLEANUP_INTERVAL_MS,
+  PRINT_READY_ALERT_AFTER_MINUTES,
+  PRINT_READY_FAIL_AFTER_MINUTES,
 } = require("../lib/env");
 const { normalizeCustomizations } = require("../utils/customizations");
 const { DELETED_PRODUCT_FALLBACK_NAME } = require("../utils/product");
@@ -1202,12 +1204,20 @@ async function getPrintOverview(filters = {}) {
     120,
     3
   );
+  const readyStaleMinutes = parseBoundedInt(
+    filters.readyStaleMinutes,
+    "readyStaleMinutes",
+    1,
+    720,
+    PRINT_READY_ALERT_AFTER_MINUTES
+  );
 
   const now = new Date();
   const staleBefore = new Date(now.getTime() - heartbeatStaleMinutes * 60_000);
+  const readyStaleBefore = new Date(now.getTime() - readyStaleMinutes * 60_000);
   const failedSince = new Date(now.getTime() - 24 * 60 * 60_000);
 
-  const [jobGroups, failedLast24h, agents, printers] = await Promise.all([
+  const [jobGroups, failedLast24h, readyStaleJobs, agents, printers] = await Promise.all([
     prisma.printJob.groupBy({
       by: ["status"],
       _count: { _all: true },
@@ -1217,6 +1227,27 @@ async function getPrintOverview(filters = {}) {
         status: PrintJobStatus.FAILED,
         updatedAt: { gte: failedSince },
       },
+    }),
+    prisma.printJob.findMany({
+      where: {
+        status: PrintJobStatus.READY,
+        cancelledAt: null,
+        scheduledAt: { lte: readyStaleBefore },
+      },
+      select: {
+        id: true,
+        orderId: true,
+        scheduledAt: true,
+        createdAt: true,
+        printer: {
+          select: {
+            code: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: { scheduledAt: "asc" },
+      take: 20,
     }),
     prisma.printAgent.findMany({
       include: {
@@ -1318,10 +1349,26 @@ async function getPrintOverview(filters = {}) {
   return {
     generatedAt: now.toISOString(),
     heartbeatStaleMinutes,
+    readyStaleMinutes,
     jobs: {
       total: Object.values(jobsByStatus).reduce((sum, value) => sum + Number(value || 0), 0),
       byStatus: jobsByStatus,
       failedLast24h,
+      alerts: {
+        readyStaleCount: readyStaleJobs.length,
+        readyStale: readyStaleJobs.map((job) => ({
+          id: job.id,
+          orderId: job.orderId,
+          scheduledAt: job.scheduledAt,
+          createdAt: job.createdAt,
+          printerCode: job.printer?.code || null,
+          printerName: job.printer?.name || null,
+          waitingMinutes: Math.max(
+            0,
+            Math.floor((now.getTime() - new Date(job.scheduledAt).getTime()) / 60_000)
+          ),
+        })),
+      },
     },
     agents: {
       total: agents.length,
@@ -1387,6 +1434,7 @@ async function reprintJob(jobId, payload = {}) {
 async function runPrintSchedulerTick() {
   const now = new Date();
   const nowMs = now.getTime();
+  const readyFailBefore = new Date(now.getTime() - PRINT_READY_FAIL_AFTER_MINUTES * 60_000);
 
   const pendingToReady = await prisma.printJob.updateMany({
     where: {
@@ -1428,6 +1476,20 @@ async function runPrintSchedulerTick() {
     },
   });
 
+  const readyToFailed = await prisma.printJob.updateMany({
+    where: {
+      status: PrintJobStatus.READY,
+      scheduledAt: { lte: readyFailBefore },
+      cancelledAt: null,
+    },
+    data: {
+      status: PrintJobStatus.FAILED,
+      failedAt: now,
+      lastErrorCode: "READY_TIMEOUT",
+      lastErrorMessage: `Job stayed READY for more than ${PRINT_READY_FAIL_AFTER_MINUTES} minutes`,
+    },
+  });
+
   const staleAgentThreshold = new Date(now.getTime() - PRINT_AGENT_OFFLINE_AFTER_MS);
   const staleAgentsToOffline = await prisma.printAgent.updateMany({
     where: {
@@ -1465,6 +1527,7 @@ async function runPrintSchedulerTick() {
     pending_to_ready: pendingToReady.count,
     retry_to_ready: retryToReady.count,
     stale_reclaimed: reclaimStale.count,
+    ready_to_failed: readyToFailed.count,
     stale_agents_to_offline: staleAgentsToOffline.count,
     printed_deleted,
   };
