@@ -8,43 +8,45 @@ datasource db {
 }
 
 model User {
-  id             Int             @id @default(autoincrement())
-  name           String
-  phone          String
-  email          String          @unique
-  password       String
-  emailVerified  Boolean         @default(false)
-  phoneVerified  Boolean         @default(false)
-  emailOtpCode   String?
-  phoneOtpCode   String?
-  otpExpiresAt   DateTime?
-  role           Role            @default(CLIENT)
-  orders         Order[]
+  id            Int       @id @default(autoincrement())
+  name          String
+  firstName     String?
+  lastName      String?
+  phone         String
+  email         String    @unique
+  password      String
+  emailVerified Boolean   @default(false)
+  phoneVerified Boolean   @default(false)
+  emailOtpCode  String?
+  phoneOtpCode  String?
+  otpExpiresAt  DateTime?
+  role          Role      @default(CLIENT)
+  orders        Order[]
 }
 
 model Category {
-  id          Int      @id @default(autoincrement())
+  id          Int          @id @default(autoincrement())
   name        String
   kind        CategoryKind @default(PRODUCT)
   description String?
-  sortOrder   Int      @default(0)
-  active      Boolean  @default(true)
+  sortOrder   Int          @default(0)
+  active      Boolean      @default(true)
   products    Product[]
   ingredients Ingredient[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   @@unique([name, kind])
   @@index([active, kind, sortOrder])
 }
 
 model Product {
-  id          Int               @id @default(autoincrement())
+  id          Int                 @id @default(autoincrement())
   name        String
   description String
-  basePrice   Decimal           @db.Decimal(10, 2)
+  basePrice   Decimal             @db.Decimal(10, 2)
   categoryId  Int?
-  category    Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  category    Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   ingredients ProductIngredient[]
   orderItems  OrderItem[]
 
@@ -53,12 +55,12 @@ model Product {
 }
 
 model Ingredient {
-  id         Int               @id @default(autoincrement())
+  id         Int                 @id @default(autoincrement())
   name       String
-  price      Decimal           @db.Decimal(10, 2)
-  isExtra    Boolean           @default(true)
+  price      Decimal             @db.Decimal(10, 2)
+  isExtra    Boolean             @default(true)
   categoryId Int?
-  category   Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  category   Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   products   ProductIngredient[]
 
   @@index([categoryId])
@@ -90,6 +92,7 @@ model Location {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   timeSlots    TimeSlot[]
+  printers     Printer[]
 
   @@index([active, name])
 }
@@ -113,15 +116,17 @@ model TimeSlot {
 }
 
 model Order {
-  id         Int         @id @default(autoincrement())
-  user       User        @relation(fields: [userId], references: [id])
-  userId     Int
-  timeSlot   TimeSlot?   @relation(fields: [timeSlotId], references: [id])
-  timeSlotId Int?
-  items      OrderItem[]
-  total      Decimal     @db.Decimal(10, 2)
-  status     OrderStatus @default(PENDING)
-  createdAt  DateTime    @default(now())
+  id           Int         @id @default(autoincrement())
+  user         User        @relation(fields: [userId], references: [id])
+  userId       Int
+  timeSlot     TimeSlot?   @relation(fields: [timeSlotId], references: [id])
+  timeSlotId   Int?
+  customerNote String?
+  items        OrderItem[]
+  total        Decimal     @db.Decimal(10, 2)
+  status       OrderStatus @default(PENDING)
+  createdAt    DateTime    @default(now())
+  printJobs    PrintJob[]
 
   @@index([userId])
   @@index([userId, status, createdAt])
@@ -130,13 +135,13 @@ model Order {
 }
 
 model OrderItem {
-  id             Int     @id @default(autoincrement())
-  order          Order   @relation(fields: [orderId], references: [id])
+  id             Int      @id @default(autoincrement())
+  order          Order    @relation(fields: [orderId], references: [id])
   orderId        Int
   product        Product? @relation(fields: [productId], references: [id], onDelete: SetNull, map: "OrderItem_pizzaId_fkey")
   productId      Int?     @map("pizzaId")
   quantity       Int
-  unitPrice      Decimal @db.Decimal(10, 2)
+  unitPrice      Decimal  @db.Decimal(10, 2)
   customizations Json
 
   @@index([orderId])
@@ -158,6 +163,115 @@ model HomeGalleryImage {
   @@index([active, sortOrder])
 }
 
+model PrintAgent {
+  id              Int               @id @default(autoincrement())
+  code            String            @unique
+  name            String
+  tokenHash       String
+  status          PrintAgentStatus  @default(OFFLINE)
+  lastHeartbeatAt DateTime?
+  lastSeenIp      String?
+  version         String?
+  metadata        Json?
+  printers        Printer[]
+  claimedJobs     PrintJob[]        @relation("ClaimedPrintJobs")
+  attempts        PrintJobAttempt[]
+  logs            PrintLog[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+model Printer {
+  id             Int                   @id @default(autoincrement())
+  code           String                @unique
+  name           String
+  model          String?
+  paperWidthMm   Int                   @default(80)
+  connectionType PrinterConnectionType @default(ETHERNET)
+  ipAddress      String?
+  port           Int                   @default(9100)
+  isActive       Boolean               @default(true)
+  agentId        Int?
+  locationId     Int?
+  agent          PrintAgent?           @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  location       Location?             @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  jobs           PrintJob[]
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@index([isActive, locationId])
+  @@index([agentId])
+}
+
+model PrintJob {
+  id               String            @id @default(uuid())
+  orderId          Int
+  printerId        Int
+  jobType          PrintJobType      @default(ORDER_TICKET)
+  status           PrintJobStatus    @default(PENDING)
+  priority         Int               @default(50)
+  scheduledAt      DateTime
+  nextRetryAt      DateTime?
+  claimedAt        DateTime?
+  lockedUntil      DateTime?
+  claimedByAgentId Int?
+  claimToken       String?
+  attemptCount     Int               @default(0)
+  maxAttempts      Int               @default(5)
+  printedAt        DateTime?
+  failedAt         DateTime?
+  cancelledAt      DateTime?
+  lastErrorCode    String?
+  lastErrorMessage String?
+  reprintOfJobId   String?
+  idempotencyKey   String            @unique
+  payload          Json
+  order            Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  printer          Printer           @relation(fields: [printerId], references: [id], onDelete: Restrict)
+  claimedByAgent   PrintAgent?       @relation("ClaimedPrintJobs", fields: [claimedByAgentId], references: [id], onDelete: SetNull)
+  reprintOfJob     PrintJob?         @relation("PrintJobReprints", fields: [reprintOfJobId], references: [id], onDelete: SetNull)
+  reprints         PrintJob[]        @relation("PrintJobReprints")
+  attempts         PrintJobAttempt[]
+  logs             PrintLog[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([status, scheduledAt, nextRetryAt, priority, createdAt])
+  @@index([claimedByAgentId, status, lockedUntil])
+  @@index([orderId, createdAt])
+}
+
+model PrintJobAttempt {
+  id              Int         @id @default(autoincrement())
+  jobId           String
+  agentId         Int?
+  startedAt       DateTime    @default(now())
+  endedAt         DateTime?
+  success         Boolean?
+  errorCode       String?
+  errorMessage    String?
+  printerResponse Json?
+  job             PrintJob    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  agent           PrintAgent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  @@index([jobId, startedAt])
+}
+
+model PrintLog {
+  id        Int           @id @default(autoincrement())
+  jobId     String?
+  agentId   Int?
+  level     PrintLogLevel
+  event     String
+  payload   Json?
+  createdAt DateTime      @default(now())
+  job       PrintJob?     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  agent     PrintAgent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  @@index([jobId, createdAt])
+  @@index([agentId, createdAt])
+}
+
 enum OrderStatus {
   PENDING
   FINALIZED
@@ -173,4 +287,36 @@ enum Role {
 enum CategoryKind {
   PRODUCT
   INGREDIENT
+}
+
+enum PrintAgentStatus {
+  ONLINE
+  OFFLINE
+  DEGRADED
+}
+
+enum PrinterConnectionType {
+  ETHERNET
+  USB
+}
+
+enum PrintJobStatus {
+  PENDING
+  READY
+  CLAIMED
+  PRINTING
+  PRINTED
+  FAILED
+  RETRY_WAITING
+  CANCELLED
+}
+
+enum PrintJobType {
+  ORDER_TICKET
+}
+
+enum PrintLogLevel {
+  INFO
+  WARN
+  ERROR
 }

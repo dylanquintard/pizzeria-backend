@@ -65,6 +65,8 @@ const locationRoutes = require("./routes/location.routes");
 const galleryRoutes = require("./routes/gallery.routes");
 const contactRoutes = require("./routes/contact.routes");
 const realtimeRoutes = require("./routes/realtime.routes");
+const printRoutes = require("./routes/print.routes");
+const { startPrintScheduler, stopPrintScheduler } = require("./services/print.service");
 
 app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
@@ -75,11 +77,21 @@ app.use("/api/locations", locationRoutes);
 app.use("/api/gallery", galleryRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/realtime", realtimeRoutes);
+app.use("/api/print", printRoutes);
 
 app.get("/", (_req, res) => {
   res.send("API Pizzeria running");
 });
 
 app.listen(PORT, () => {
+  startPrintScheduler();
   console.log(`Server running on port ${PORT}`);
+});
+
+process.on("SIGTERM", () => {
+  stopPrintScheduler();
+});
+
+process.on("SIGINT", () => {
+  stopPrintScheduler();
 });

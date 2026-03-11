@@ -335,6 +335,45 @@ function normalizePhone(phone) {
   return normalized;
 }
 
+function normalizeNamePart(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function deriveNamePartsFromFullName(name) {
+  const normalized = normalizeNamePart(name);
+  if (!normalized) return { firstName: null, lastName: null };
+
+  const [firstName = "", ...rest] = normalized.split(" ");
+  const lastName = rest.join(" ");
+
+  return {
+    firstName: firstName || null,
+    lastName: lastName || null,
+  };
+}
+
+function normalizeUserNameInput(data = {}) {
+  const parsedFirstName = normalizeNamePart(data.firstName);
+  const parsedLastName = normalizeNamePart(data.lastName);
+  const parsedName = normalizeNamePart(data.name);
+
+  if (!parsedName && !parsedFirstName && !parsedLastName) {
+    throw new Error("name is required");
+  }
+
+  const fullName =
+    parsedName || [parsedFirstName, parsedLastName].filter(Boolean).join(" ");
+  const derivedParts = deriveNamePartsFromFullName(fullName);
+
+  return {
+    name: fullName,
+    firstName: parsedFirstName || derivedParts.firstName,
+    lastName: parsedLastName || derivedParts.lastName,
+  };
+}
+
 function validateNewPassword(password) {
   if (typeof password !== "string" || password.length < 8) {
     throw new Error("password must be at least 8 characters");
@@ -433,6 +472,8 @@ function formatOrderForFrontend(order, ingredientMap) {
     id: order.id,
     status: order.status,
     totalPrice: Number(order.total),
+    customerNote: order.customerNote || null,
+    note: order.customerNote || null,
     timeSlot: order.timeSlot || null,
     createdAt: order.createdAt,
     items,
@@ -444,9 +485,7 @@ async function createUser(data) {
   const phone = normalizePhone(data.phone);
   validateNewPassword(data.password);
 
-  const name = typeof data.name === "string" ? data.name.trim() : "";
-
-  if (!name) throw new Error("name is required");
+  const normalizedName = normalizeUserNameInput(data);
 
   const existingUser = await prisma.user.findUnique({ where: { email } });
   if (existingUser) throw new Error("This email is already used");
@@ -455,7 +494,9 @@ async function createUser(data) {
 
   const user = await prisma.user.create({
     data: {
-      name,
+      name: normalizedName.name,
+      firstName: normalizedName.firstName,
+      lastName: normalizedName.lastName,
       email,
       phone,
       password: hashedPassword,
@@ -635,6 +676,8 @@ async function getMe(userId) {
     select: {
       id: true,
       name: true,
+      firstName: true,
+      lastName: true,
       email: true,
       phone: true,
       emailVerified: true,
@@ -647,9 +690,37 @@ async function getMe(userId) {
 async function updateMe(userId, body) {
   const parsedUserId = parsePositiveInt(userId, "userId");
   const updateData = {};
+  let currentUser = null;
 
-  if (typeof body.name === "string" && body.name.trim() !== "") {
-    updateData.name = body.name.trim();
+  async function getCurrentUser() {
+    if (currentUser) return currentUser;
+    currentUser = await prisma.user.findUnique({ where: { id: parsedUserId } });
+    if (!currentUser) throw new Error("User not found");
+    return currentUser;
+  }
+
+  const requestedNameUpdate =
+    typeof body.name === "string" ||
+    typeof body.firstName === "string" ||
+    typeof body.lastName === "string";
+
+  if (requestedNameUpdate) {
+    const user = await getCurrentUser();
+    const normalizedName = normalizeUserNameInput({
+      name: typeof body.name === "string" && body.name.trim() !== "" ? body.name : user.name,
+      firstName:
+        typeof body.firstName === "string" && body.firstName.trim() !== ""
+          ? body.firstName
+          : user.firstName,
+      lastName:
+        typeof body.lastName === "string" && body.lastName.trim() !== ""
+          ? body.lastName
+          : user.lastName,
+    });
+
+    updateData.name = normalizedName.name;
+    updateData.firstName = normalizedName.firstName;
+    updateData.lastName = normalizedName.lastName;
   }
 
   if (typeof body.phone === "string" && body.phone.trim() !== "") {
@@ -659,8 +730,7 @@ async function updateMe(userId, body) {
   if (body.oldPassword && body.newPassword) {
     validateNewPassword(body.newPassword);
 
-    const user = await prisma.user.findUnique({ where: { id: parsedUserId } });
-    if (!user) throw new Error("User not found");
+    const user = await getCurrentUser();
 
     const match = await bcrypt.compare(body.oldPassword, user.password);
     if (!match) throw new Error("Old password is incorrect");
@@ -691,6 +761,8 @@ async function getAllUsers() {
     select: {
       id: true,
       name: true,
+      firstName: true,
+      lastName: true,
       email: true,
       phone: true,
       emailVerified: true,
@@ -708,6 +780,8 @@ async function getUserById(id) {
     select: {
       id: true,
       name: true,
+      firstName: true,
+      lastName: true,
       email: true,
       phone: true,
       emailVerified: true,
@@ -740,11 +814,14 @@ async function getOrCreateArchivedUser(tx) {
 
   const fallbackPassword = generateRandomPassword(24);
   const hashedPassword = await bcrypt.hash(fallbackPassword, SALT_ROUNDS);
+  const archivedNameParts = deriveNamePartsFromFullName(ARCHIVED_USER_NAME);
 
   try {
     return await tx.user.create({
       data: {
         name: ARCHIVED_USER_NAME,
+        firstName: archivedNameParts.firstName,
+        lastName: archivedNameParts.lastName,
         email: ARCHIVED_USER_EMAIL,
         phone: ARCHIVED_USER_PHONE,
         password: hashedPassword,
@@ -780,6 +857,8 @@ async function deleteUser(userId) {
       select: {
         id: true,
         name: true,
+        firstName: true,
+        lastName: true,
         email: true,
         phone: true,
         emailVerified: true,
@@ -820,6 +899,8 @@ async function deleteUser(userId) {
       select: {
         id: true,
         name: true,
+        firstName: true,
+        lastName: true,
         email: true,
         phone: true,
         emailVerified: true,

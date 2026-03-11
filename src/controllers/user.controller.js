@@ -90,9 +90,11 @@ function sendError(res, err, defaultStatus = 400) {
 async function register(req, res) {
   try {
     setNoStore(res);
-    const { name, email, phone, password } = req.body;
+    const { name, firstName, lastName, email, phone, password } = req.body;
     const result = await userService.createUser({
       name,
+      firstName,
+      lastName,
       email,
       phone,
       password,

@@ -7,11 +7,21 @@ const {
   assertAllowedTransition,
 } = require("../utils/order-status");
 const timeSlotService = require("./timeslot.service");
+const printService = require("./print.service");
 
 const ORDER_INCLUDE = {
   items: { include: { product: { include: { category: true } } } },
   timeSlot: { include: { location: true } },
-  user: { select: { id: true, name: true } },
+  user: {
+    select: {
+      id: true,
+      name: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+      email: true,
+    },
+  },
 };
 function parseDeletedProductSnapshot(customizations) {
   const snapshot = customizations?.deletedProductSnapshot;
@@ -38,6 +48,16 @@ function parseStatus(status) {
     throw new Error(`Invalid status: ${status}`);
   }
   return OrderStatus[normalized];
+}
+
+function parseOptionalCustomerNote(value) {
+  if (value === undefined || value === null) return null;
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+  if (normalized.length > 1000) {
+    throw new Error("customerNote is too long");
+  }
+  return normalized;
 }
 
 function getOrderProductsCount(order) {
@@ -152,9 +172,20 @@ function formatOrderWithIngredientMap(order, ingredientMap) {
     id: order.id,
     status: order.status,
     total: Number(order.total),
+    customerNote: order.customerNote || null,
+    note: order.customerNote || null,
     createdAt: order.createdAt,
     timeSlot: order.timeSlot || null,
-    user: order.user ? { id: order.user.id, name: order.user.name } : null,
+    user: order.user
+      ? {
+          id: order.user.id,
+          name: order.user.name,
+          firstName: order.user.firstName ?? null,
+          lastName: order.user.lastName ?? null,
+          phone: order.user.phone ?? null,
+          email: order.user.email ?? null,
+        }
+      : null,
     items,
   };
 }
@@ -366,6 +397,9 @@ async function finalizeOrder(userId, pickupSelection = {}) {
   const pickupDate = pickupSelection?.pickupDate;
   const pickupTime = pickupSelection?.pickupTime;
   const locationId = pickupSelection?.locationId;
+  const customerNote = parseOptionalCustomerNote(
+    pickupSelection?.customerNote ?? pickupSelection?.note
+  );
 
   if (!pickupDate) throw new Error("pickupDate is required");
   if (!pickupTime) throw new Error("pickupTime is required");
@@ -400,8 +434,16 @@ async function finalizeOrder(userId, pickupSelection = {}) {
       data: {
         status: OrderStatus.COMPLETED,
         timeSlotId: concreteSlot.id,
+        customerNote,
       },
     });
+
+    try {
+      await printService.enqueueOrderTicketForOrderId(tx, cart.id);
+    } catch (printErr) {
+      // Keep order finalization successful even if print infrastructure is not ready.
+      console.error("enqueueOrderTicketForOrderId warning:", printErr?.message || printErr);
+    }
 
     return tx.order.findUnique({
       where: { id: cart.id },
@@ -492,7 +534,11 @@ async function updateOrderStatusAdmin(orderId, status) {
   const updatedOrder = await prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({
       where: { id: parsedOrderId },
-      include: { items: true, timeSlot: true, user: { select: { id: true, name: true } } },
+      include: {
+        items: true,
+        timeSlot: true,
+        user: { select: { id: true, name: true, firstName: true, lastName: true, phone: true, email: true } },
+      },
     });
 
     if (!order) throw new Error("Order not found");
@@ -536,7 +582,7 @@ async function getOrderConfirmationEmailData(orderId) {
   const order = await prisma.order.findUnique({
     where: { id: parsedOrderId },
     include: {
-      user: { select: { email: true, name: true } },
+      user: { select: { email: true, name: true, firstName: true, lastName: true } },
       timeSlot: { include: { location: true } },
     },
   });
@@ -547,6 +593,9 @@ async function getOrderConfirmationEmailData(orderId) {
     orderId: order.id,
     toEmail: order.user?.email || null,
     customerName: order.user?.name || "",
+    customerFirstName: order.user?.firstName || null,
+    customerLastName: order.user?.lastName || null,
+    customerNote: order.customerNote || null,
     pickupTimeLabel: order.timeSlot?.startTime
       ? formatPickupTimeForEmail(order.timeSlot.startTime)
       : "",

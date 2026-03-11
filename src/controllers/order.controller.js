@@ -78,11 +78,13 @@ async function finalizeOrder(req, res) {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const { pickupDate, pickupTime, locationId } = req.body || {};
+    const { pickupDate, pickupTime, locationId, customerNote, note } = req.body || {};
     const order = await orderService.finalizeOrder(userId, {
       pickupDate,
       pickupTime,
       locationId,
+      customerNote,
+      note,
     });
 
     emitRealtimeEvent(
