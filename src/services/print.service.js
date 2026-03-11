@@ -1238,6 +1238,7 @@ async function getPrintOverview(filters = {}) {
             name: true,
             status: true,
             lastHeartbeatAt: true,
+            metadata: true,
           },
         },
       },
@@ -1256,6 +1257,14 @@ async function getPrintOverview(filters = {}) {
 
   const agentAlerts = [];
   const printerAlerts = [];
+  const runtimeCounts = {
+    ONLINE: 0,
+    OFFLINE: 0,
+    DEGRADED: 0,
+    INACTIVE: 0,
+    UNASSIGNED: 0,
+    UNKNOWN: 0,
+  };
 
   for (const agent of agents) {
     const staleHeartbeat = !agent.lastHeartbeatAt || agent.lastHeartbeatAt < staleBefore;
@@ -1294,6 +1303,15 @@ async function getPrintOverview(filters = {}) {
     agentCode: printer.agent?.code || null,
   }));
 
+  for (const printer of printers) {
+    const runtime = getPrinterRuntimeStatus(printer);
+    if (runtimeCounts[runtime.status] !== undefined) {
+      runtimeCounts[runtime.status] += 1;
+    } else {
+      runtimeCounts.UNKNOWN += 1;
+    }
+  }
+
   return {
     generatedAt: now.toISOString(),
     heartbeatStaleMinutes,
@@ -1313,6 +1331,11 @@ async function getPrintOverview(filters = {}) {
       total: printers.length,
       active: printers.filter((printer) => printer.isActive).length,
       inactive: inactivePrinters.length,
+      connected: runtimeCounts.ONLINE,
+      offline: runtimeCounts.OFFLINE,
+      degraded: runtimeCounts.DEGRADED,
+      unassigned: runtimeCounts.UNASSIGNED,
+      unknown: runtimeCounts.UNKNOWN,
       alerts: {
         metadataIssues: printerAlerts,
         inactive: inactivePrinters,
