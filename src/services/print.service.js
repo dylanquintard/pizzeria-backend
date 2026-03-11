@@ -233,7 +233,9 @@ function getPrinterRuntimeStatus(printer) {
     status = "UNASSIGNED";
   } else if (heartbeatStale || agent.status === PrintAgentStatus.OFFLINE) {
     status = "OFFLINE";
-  } else if (reportedOnline === false || paperOk === false) {
+  } else if (reportedOnline === false) {
+    status = "OFFLINE";
+  } else if (paperOk === false) {
     status = "DEGRADED";
   } else if (reportedOnline === true) {
     status = "ONLINE";
