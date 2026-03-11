@@ -14,6 +14,7 @@ const {
   PRINT_RETRY_BASE_SECONDS,
   PRINT_RETRY_MAX_SECONDS,
   PRINT_DEFAULT_MAX_ATTEMPTS,
+  PRINT_AGENT_OFFLINE_AFTER_MS,
 } = require("../lib/env");
 const { normalizeCustomizations } = require("../utils/customizations");
 const { DELETED_PRODUCT_FALLBACK_NAME } = require("../utils/product");
@@ -154,15 +155,6 @@ function safeHexCompare(leftHex, rightHex) {
   } catch (_err) {
     return false;
   }
-}
-
-function parsePrintAgentStatus(value, fallback = PrintAgentStatus.OFFLINE) {
-  if (value === undefined || value === null || value === "") return fallback;
-  const normalized = String(value).trim().toUpperCase();
-  if (!PrintAgentStatus[normalized]) {
-    throw createError("Invalid print agent status", 400, "INVALID_STATUS");
-  }
-  return PrintAgentStatus[normalized];
 }
 
 function parsePrinterConnectionType(value, fallback = PrinterConnectionType.ETHERNET) {
@@ -566,7 +558,6 @@ async function getPrintAgents() {
 async function upsertPrintAgent(payload = {}) {
   const code = normalizeCode(payload.code, "code");
   const name = normalizeRequiredText(payload.name, "name", 120);
-  const status = parsePrintAgentStatus(payload.status, PrintAgentStatus.OFFLINE);
 
   const existing = await prisma.printAgent.findUnique({ where: { code } });
   const providedToken = normalizeOptionalText(payload.token, "token", 512);
@@ -580,7 +571,7 @@ async function upsertPrintAgent(payload = {}) {
       data: {
         code,
         name,
-        status,
+        status: PrintAgentStatus.OFFLINE,
         tokenHash: hashPrintAgentToken(rawToken),
         metadata: payload.metadata || null,
       },
@@ -594,7 +585,6 @@ async function upsertPrintAgent(payload = {}) {
 
   const updateData = {
     name,
-    status,
   };
 
   if (payload.metadata !== undefined) {
@@ -1360,10 +1350,27 @@ async function runPrintSchedulerTick() {
     },
   });
 
+  const staleAgentThreshold = new Date(now.getTime() - PRINT_AGENT_OFFLINE_AFTER_MS);
+  const staleAgentsToOffline = await prisma.printAgent.updateMany({
+    where: {
+      status: {
+        in: [PrintAgentStatus.ONLINE, PrintAgentStatus.DEGRADED],
+      },
+      OR: [
+        { lastHeartbeatAt: null },
+        { lastHeartbeatAt: { lt: staleAgentThreshold } },
+      ],
+    },
+    data: {
+      status: PrintAgentStatus.OFFLINE,
+    },
+  });
+
   return {
     pending_to_ready: pendingToReady.count,
     retry_to_ready: retryToReady.count,
     stale_reclaimed: reclaimStale.count,
+    stale_agents_to_offline: staleAgentsToOffline.count,
   };
 }
 
