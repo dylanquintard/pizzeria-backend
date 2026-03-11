@@ -32,16 +32,6 @@ async function getPublicGallery(req, res) {
   }
 }
 
-async function getGalleryImageById(req, res) {
-  try {
-    const image = await galleryService.getGalleryImageById(req.params.id);
-    res.json(image);
-  } catch (err) {
-    const status = err.message === "Gallery image not found" ? 404 : 400;
-    res.status(status).json({ error: err.message });
-  }
-}
-
 async function getGalleryAdmin(req, res) {
   try {
     const images = await galleryService.getGalleryImages(req.query);
@@ -129,7 +119,6 @@ async function deleteGalleryImage(req, res) {
 
 module.exports = {
   getPublicGallery,
-  getGalleryImageById,
   getGalleryAdmin,
   uploadGalleryImage,
   createGalleryImage,

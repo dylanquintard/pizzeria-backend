@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const prisma = require("../lib/prisma");
-const { JWT_SECRET } = require("../lib/env");
+const { JWT_SECRET, CORS_ORIGINS } = require("../lib/env");
 const { sanitizeUser } = require("../utils/user");
 const { normalizeCustomizations } = require("../utils/customizations");
 const { DELETED_PRODUCT_FALLBACK_NAME } = require("../utils/product");
@@ -15,6 +15,7 @@ const E164_PHONE_REGEX = /^\+[1-9]\d{7,14}$/;
 const OTP_CODE_REGEX = /^\d{6}$/;
 const DEFAULT_COUNTRY_DIAL_CODE = process.env.DEFAULT_COUNTRY_DIAL_CODE || "+33";
 const DEFAULT_EMAIL_OTP_TTL_MINUTES = 10;
+const DEFAULT_PASSWORD_RESET_TTL_MINUTES = 30;
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const RANDOM_PASSWORD_LENGTH = 10;
 const RANDOM_PASSWORD_ALPHABET =
@@ -65,6 +66,24 @@ function getEmailOtpTtlMinutes() {
     return DEFAULT_EMAIL_OTP_TTL_MINUTES;
   }
   return parsed;
+}
+
+function getPasswordResetTtlMinutes() {
+  const parsed = Number(process.env.PASSWORD_RESET_TTL_MINUTES);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return DEFAULT_PASSWORD_RESET_TTL_MINUTES;
+  }
+  return parsed;
+}
+
+function getPasswordResetBaseUrl() {
+  const explicitBase = String(process.env.PASSWORD_RESET_URL_BASE || "").trim();
+  if (explicitBase && /^https?:\/\//i.test(explicitBase)) {
+    return explicitBase.replace(/\/+$/, "");
+  }
+
+  const fallbackOrigin = String(CORS_ORIGINS?.[0] || "http://localhost:3000").trim();
+  return `${fallbackOrigin.replace(/\/+$/, "")}/reset-password`;
 }
 
 function normalizeOtpCode(code) {
@@ -123,7 +142,7 @@ function escapeHtml(value) {
 }
 
 function generateSixDigitCode() {
-  return String(Math.floor(Math.random() * 1000000)).padStart(6, "0");
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
 }
 
 function generateRandomPassword(length = RANDOM_PASSWORD_LENGTH) {
@@ -133,6 +152,31 @@ function generateRandomPassword(length = RANDOM_PASSWORD_LENGTH) {
     value += RANDOM_PASSWORD_ALPHABET[position];
   }
   return value;
+}
+
+function hashResetToken(rawToken) {
+  return crypto.createHash("sha256").update(String(rawToken || "")).digest("hex");
+}
+
+function safeHexCompare(leftHex, rightHex) {
+  try {
+    const left = Buffer.from(String(leftHex || ""), "hex");
+    const right = Buffer.from(String(rightHex || ""), "hex");
+    if (left.length === 0 || right.length === 0 || left.length !== right.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(left, right);
+  } catch (_err) {
+    return false;
+  }
+}
+
+function buildPasswordResetLink(email, rawToken) {
+  const baseUrl = getPasswordResetBaseUrl();
+  const url = new URL(baseUrl);
+  url.searchParams.set("email", String(email || "").trim().toLowerCase());
+  url.searchParams.set("token", String(rawToken || "").trim());
+  return url.toString();
 }
 
 function getOtpExpirationDate() {
@@ -205,7 +249,7 @@ async function sendVerificationEmail({ email, name, code }) {
   }
 }
 
-async function sendPasswordResetEmail({ email, name, temporaryPassword }) {
+async function sendPasswordResetEmail({ email, name, resetLink, expiresInMinutes }) {
   const from = process.env.SMTP_FROM?.trim() || getRequiredMailEnv("SMTP_USER");
   const smtpUser = getRequiredMailEnv("SMTP_USER");
   const subject = "Reinitialisation de votre mot de passe";
@@ -213,17 +257,23 @@ async function sendPasswordResetEmail({ email, name, temporaryPassword }) {
   const textBody = [
     `Bonjour ${name},`,
     "",
-    "Un nouveau mot de passe temporaire a ete genere pour votre compte.",
-    `Nouveau mot de passe: ${temporaryPassword}`,
+    "Vous avez demande la reinitialisation de votre mot de passe.",
+    `Utilisez ce lien pour definir un nouveau mot de passe: ${resetLink}`,
+    `Ce lien expire dans ${expiresInMinutes} minutes.`,
     "",
-    "Connectez-vous puis changez ce mot de passe depuis votre profil.",
+    "Si vous n'etes pas a l'origine de cette demande, ignorez cet email.",
   ].join("\n");
 
   const htmlBody = `
     <p>Bonjour ${escapeHtml(name)},</p>
-    <p>Un nouveau mot de passe temporaire a ete genere pour votre compte.</p>
-    <p><strong>Nouveau mot de passe :</strong> ${escapeHtml(temporaryPassword)}</p>
-    <p>Connectez-vous puis changez ce mot de passe depuis votre profil.</p>
+    <p>Vous avez demande la reinitialisation de votre mot de passe.</p>
+    <p>
+      <a href="${escapeHtml(resetLink)}" target="_blank" rel="noopener noreferrer">
+        Definir un nouveau mot de passe
+      </a>
+    </p>
+    <p>Ce lien expire dans ${escapeHtml(expiresInMinutes)} minutes.</p>
+    <p>Si vous n'etes pas a l'origine de cette demande, ignorez cet email.</p>
   `;
 
   try {
@@ -595,15 +645,17 @@ async function forgotPassword({ email }) {
     return { sent: true };
   }
 
-  const temporaryPassword = generateRandomPassword();
-  const passwordHash = await bcrypt.hash(temporaryPassword, SALT_ROUNDS);
+  const rawResetToken = crypto.randomBytes(32).toString("hex");
+  const passwordResetTokenHash = hashResetToken(rawResetToken);
+  const ttlMinutes = getPasswordResetTtlMinutes();
+  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+  const resetLink = buildPasswordResetLink(user.email, rawResetToken);
 
   await prisma.user.update({
     where: { id: user.id },
     data: {
-      password: passwordHash,
-      emailOtpCode: null,
-      otpExpiresAt: null,
+      passwordResetTokenHash,
+      passwordResetExpiresAt: expiresAt,
     },
   });
 
@@ -611,14 +663,18 @@ async function forgotPassword({ email }) {
     await sendPasswordResetEmail({
       email: user.email,
       name: user.name,
-      temporaryPassword,
+      resetLink,
+      expiresInMinutes: ttlMinutes,
     });
   } catch (err) {
-    // Roll back password change if delivery fails.
+    // If email delivery fails, immediately invalidate reset token.
     try {
       await prisma.user.update({
         where: { id: user.id },
-        data: { password: user.password },
+        data: {
+          passwordResetTokenHash: null,
+          passwordResetExpiresAt: null,
+        },
       });
     } catch (_rollbackErr) {
       if (shouldLogEmailOtpDebug()) {
@@ -632,6 +688,44 @@ async function forgotPassword({ email }) {
   }
 
   return { sent: true };
+}
+
+async function resetPassword({ email, token, password }) {
+  const normalizedEmail = normalizeEmail(email);
+  validateNewPassword(password);
+  const rawToken = String(token || "").trim();
+  if (!rawToken) {
+    throw new Error("Invalid or expired reset link");
+  }
+
+  const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+  if (!user || !user.passwordResetTokenHash || !user.passwordResetExpiresAt) {
+    throw new Error("Invalid or expired reset link");
+  }
+
+  if (new Date(user.passwordResetExpiresAt).getTime() < Date.now()) {
+    throw new Error("Invalid or expired reset link");
+  }
+
+  const providedTokenHash = hashResetToken(rawToken);
+  const isValid = safeHexCompare(user.passwordResetTokenHash, providedTokenHash);
+  if (!isValid) {
+    throw new Error("Invalid or expired reset link");
+  }
+
+  const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      password: passwordHash,
+      passwordResetTokenHash: null,
+      passwordResetExpiresAt: null,
+      emailOtpCode: null,
+      otpExpiresAt: null,
+    },
+  });
+
+  return { reset: true };
 }
 
 async function loginUser({ email, password }) {
@@ -916,6 +1010,7 @@ module.exports = {
   verifyEmailCode,
   resendEmailVerificationCode,
   forgotPassword,
+  resetPassword,
   loginUser,
   getOrdersByUserId,
   getMe,

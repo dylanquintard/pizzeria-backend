@@ -20,6 +20,8 @@ model User {
   emailOtpCode  String?
   phoneOtpCode  String?
   otpExpiresAt  DateTime?
+  passwordResetTokenHash String?
+  passwordResetExpiresAt DateTime?
   role          Role      @default(CLIENT)
   orders        Order[]
 }

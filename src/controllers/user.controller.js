@@ -13,6 +13,12 @@ function setNoStore(res) {
   res.setHeader("Cache-Control", "no-store");
 }
 
+function shouldIncludeAuthToken(req) {
+  const queryValue = String(req.query?.includeToken || req.query?.include_token || "").trim().toLowerCase();
+  const bodyValue = String(req.body?.includeToken || req.body?.include_token || "").trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(queryValue) || ["1", "true", "yes", "on"].includes(bodyValue);
+}
+
 function setAuthCookie(res, token) {
   res.cookie(AUTH_COOKIE_NAME, token, {
     httpOnly: true,
@@ -112,7 +118,11 @@ async function login(req, res) {
     const { user, token } = await userService.loginUser({ email, password });
     setAuthCookie(res, token);
     issueCsrfToken(res);
-    res.json({ user, token });
+    if (shouldIncludeAuthToken(req)) {
+      res.json({ user, token });
+      return;
+    }
+    res.json({ user });
   } catch (err) {
     sendError(res, err);
   }
@@ -149,6 +159,17 @@ async function forgotPassword(req, res) {
     setNoStore(res);
     const { email } = req.body;
     const result = await userService.forgotPassword({ email });
+    res.json(result);
+  } catch (err) {
+    sendError(res, err);
+  }
+}
+
+async function resetPassword(req, res) {
+  try {
+    setNoStore(res);
+    const { email, token, password } = req.body || {};
+    const result = await userService.resetPassword({ email, token, password });
     res.json(result);
   } catch (err) {
     sendError(res, err);
@@ -245,6 +266,7 @@ module.exports = {
   verifyEmail,
   resendEmailVerification,
   forgotPassword,
+  resetPassword,
   login,
   logout,
   getUserOrders,

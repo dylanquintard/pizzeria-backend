@@ -54,6 +54,7 @@ router.post("/register", authRegisterRateLimit, userController.register);
 router.post("/verify-email", authVerifyEmailRateLimit, userController.verifyEmail);
 router.post("/resend-verification", authResendRateLimit, userController.resendEmailVerification);
 router.post("/forgot-password", authForgotPasswordRateLimit, userController.forgotPassword);
+router.post("/reset-password", authForgotPasswordRateLimit, userController.resetPassword);
 router.post("/login", authLoginRateLimit, userController.login);
 router.post("/logout", authMiddleware, userController.logout);
 

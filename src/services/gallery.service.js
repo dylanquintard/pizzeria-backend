@@ -162,15 +162,6 @@ async function getGalleryImages(filters = {}) {
   });
 }
 
-async function getGalleryImageById(id) {
-  const imageId = parsePositiveInt(id, "id");
-  const image = await prisma.homeGalleryImage.findUnique({
-    where: { id: imageId },
-  });
-  if (!image) throw new Error("Gallery image not found");
-  return image;
-}
-
 async function createGalleryImage(data) {
   const imageUrl = parseImageUrl(data.imageUrl);
   const isHomeBackground = parseOptionalBoolean(
@@ -297,7 +288,6 @@ async function deleteGalleryImage(id) {
 module.exports = {
   saveUploadedGalleryImage,
   getGalleryImages,
-  getGalleryImageById,
   createGalleryImage,
   updateGalleryImage,
   activateGalleryImage,

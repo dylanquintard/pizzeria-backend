@@ -18,7 +18,6 @@ router.post(
   handleGalleryImageUpload,
   galleryController.uploadGalleryImage
 );
-router.get("/:id", galleryController.getGalleryImageById);
 router.post(
   "/",
   authMiddleware,
