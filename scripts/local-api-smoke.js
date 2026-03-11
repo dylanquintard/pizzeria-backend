@@ -399,10 +399,10 @@ async function run() {
       token: adminToken,
       expected: [200],
     });
-    await request("Order admin update status", "PATCH", `/api/orders/${orderId}/status`, {
+    await request("Order admin finalize disabled", "PATCH", `/api/orders/${orderId}/status`, {
       token: adminToken,
       body: { status: "FINALIZED" },
-      expected: [200],
+      expected: [400],
     });
     await request("Order admin delete", "DELETE", `/api/orders/${orderId}`, {
       token: adminToken,

@@ -1,4 +1,5 @@
 const printService = require("../services/print.service");
+const { emitRealtimeEvent } = require("../lib/realtime");
 
 function sendError(res, err, fallbackStatus = 400) {
   const status = Number(err?.status) || fallbackStatus;
@@ -41,6 +42,40 @@ async function markJobSuccess(req, res) {
       req.params.jobId,
       req.body || {}
     );
+
+    const orderUpdate = result?.order_status_updated || null;
+    if (orderUpdate?.id) {
+      emitRealtimeEvent(
+        "orders:admin-updated",
+        {
+          type: "order-status-updated",
+          orderId: orderUpdate.id,
+          status: orderUpdate.status,
+        },
+        { roles: ["ADMIN"] }
+      );
+
+      if (orderUpdate.userId) {
+        emitRealtimeEvent(
+          "orders:user-updated",
+          {
+            type: "order-status-updated",
+            orderId: orderUpdate.id,
+            status: orderUpdate.status,
+          },
+          { userIds: [orderUpdate.userId] }
+        );
+      }
+
+      if (orderUpdate.timeSlotId) {
+        emitRealtimeEvent("timeslots:updated", {
+          type: "order-status-updated",
+          orderId: orderUpdate.id,
+          timeSlotId: orderUpdate.timeSlotId,
+        });
+      }
+    }
+
     res.json(result);
   } catch (err) {
     sendError(res, err);

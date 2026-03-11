@@ -1,4 +1,4 @@
-const { OrderStatus } = require("@prisma/client");
+const { OrderStatus, PrintJobStatus } = require("@prisma/client");
 const prisma = require("../lib/prisma");
 const { normalizeCustomizations } = require("../utils/customizations");
 const { DELETED_PRODUCT_FALLBACK_NAME } = require("../utils/product");
@@ -21,6 +21,23 @@ const ORDER_INCLUDE = {
       phone: true,
       email: true,
     },
+  },
+};
+
+const ADMIN_ORDER_INCLUDE = {
+  ...ORDER_INCLUDE,
+  printJobs: {
+    where: { reprintOfJobId: null },
+    select: {
+      id: true,
+      status: true,
+      scheduledAt: true,
+      createdAt: true,
+      updatedAt: true,
+      reprintOfJobId: true,
+    },
+    orderBy: { createdAt: "desc" },
+    take: 1,
   },
 };
 function parseDeletedProductSnapshot(customizations) {
@@ -48,6 +65,80 @@ function parseStatus(status) {
     throw new Error(`Invalid status: ${status}`);
   }
   return OrderStatus[normalized];
+}
+
+function normalizeStatus(status) {
+  return String(status || "").trim().toUpperCase();
+}
+
+function appendAndClause(where, clause) {
+  if (!where.AND) {
+    where.AND = [];
+  }
+  where.AND.push(clause);
+}
+
+function applyAdminStatusFilter(where, status) {
+  const normalized = normalizeStatus(status);
+
+  if (!normalized) return;
+
+  if (normalized === "IN_PROGRESS") {
+    appendAndClause(where, {
+      status: {
+        in: [OrderStatus.COMPLETED],
+      },
+    });
+    appendAndClause(where, {
+      NOT: {
+        printJobs: {
+          some: {
+            reprintOfJobId: null,
+            status: PrintJobStatus.PRINTED,
+          },
+        },
+      },
+    });
+    return;
+  }
+
+  if (normalized === "PRINTED") {
+    appendAndClause(where, {
+      OR: [
+        { status: OrderStatus.FINALIZED },
+        {
+          printJobs: {
+            some: {
+              reprintOfJobId: null,
+              status: PrintJobStatus.PRINTED,
+            },
+          },
+        },
+      ],
+    });
+    return;
+  }
+
+  where.status = parseStatus(normalized);
+}
+
+function deriveOrderWorkflowStatus(order, primaryPrintJob) {
+  if (order?.status === OrderStatus.CANCELED) {
+    return "CANCELED";
+  }
+
+  if (
+    order?.status === OrderStatus.FINALIZED ||
+    primaryPrintJob?.status === PrintJobStatus.PRINTED
+  ) {
+    return "PRINTED";
+  }
+
+  if (order?.status === OrderStatus.PENDING) {
+    return "PENDING";
+  }
+
+  return "IN_PROGRESS";
 }
 
 function parseOptionalCustomerNote(value) {
@@ -116,6 +207,10 @@ async function buildIngredientMapFromOrders(orders) {
 
 function formatOrderWithIngredientMap(order, ingredientMap) {
   if (!order) return { items: [] };
+  const primaryPrintJob = Array.isArray(order.printJobs) && order.printJobs.length > 0
+    ? order.printJobs[0]
+    : null;
+  const workflowStatus = deriveOrderWorkflowStatus(order, primaryPrintJob);
 
   const items = order.items.map((item) => {
     const rawCustomizations = item.customizations || {};
@@ -171,6 +266,17 @@ function formatOrderWithIngredientMap(order, ingredientMap) {
   return {
     id: order.id,
     status: order.status,
+    workflowStatus,
+    printTicketStatus: primaryPrintJob?.status || null,
+    primaryPrintJob: primaryPrintJob
+      ? {
+          id: primaryPrintJob.id,
+          status: primaryPrintJob.status,
+          scheduledAt: primaryPrintJob.scheduledAt,
+          createdAt: primaryPrintJob.createdAt,
+          updatedAt: primaryPrintJob.updatedAt,
+        }
+      : null,
     total: Number(order.total),
     customerNote: order.customerNote || null,
     note: order.customerNote || null,
@@ -461,9 +567,7 @@ async function getOrdersAdmin(filters = {}) {
     where.userId = parsePositiveInt(filters.userId, "userId");
   }
 
-  if (filters.status) {
-    where.status = parseStatus(filters.status);
-  }
+  applyAdminStatusFilter(where, filters.status);
 
   if (filters.date) {
     const startOfDay = new Date(filters.date);
@@ -484,7 +588,7 @@ async function getOrdersAdmin(filters = {}) {
 
   const orders = await prisma.order.findMany({
     where,
-    include: ORDER_INCLUDE,
+    include: ADMIN_ORDER_INCLUDE,
     orderBy: [{ timeSlot: { startTime: "asc" } }, { createdAt: "desc" }],
   });
 

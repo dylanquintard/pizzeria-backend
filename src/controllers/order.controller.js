@@ -212,9 +212,11 @@ async function updateOrderStatusAdmin(req, res) {
       return res.status(404).json({ error: "Order not found" });
     }
 
-    if (status === "FINALIZED" && order.status !== "COMPLETED") {
+    const normalizedStatus = String(status || "").trim().toUpperCase();
+
+    if (normalizedStatus === "FINALIZED" || normalizedStatus === "PRINTED") {
       return res.status(400).json({
-        error: "Only COMPLETED orders can be finalized",
+        error: "Manual finalize is disabled. Order becomes PRINTED automatically after ticket printing.",
       });
     }
 

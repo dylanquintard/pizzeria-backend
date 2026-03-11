@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const {
+  OrderStatus,
   PrintAgentStatus,
   PrinterConnectionType,
   PrintJobStatus,
@@ -1041,17 +1042,72 @@ async function markPrintJobSuccess(agent, jobId, payload = {}) {
       payload: payload.meta || null,
     });
 
+    let orderStatusUpdated = null;
+    const orderFinalize = await tx.order.updateMany({
+      where: {
+        id: job.orderId,
+        status: OrderStatus.COMPLETED,
+      },
+      data: {
+        status: OrderStatus.FINALIZED,
+      },
+    });
+
+    if (orderFinalize.count === 1) {
+      orderStatusUpdated = await tx.order.findUnique({
+        where: { id: job.orderId },
+        select: {
+          id: true,
+          status: true,
+          userId: true,
+          timeSlotId: true,
+        },
+      });
+    }
+
     return {
       ok: true,
       status: updated.status,
+      order_status_updated: orderStatusUpdated,
     };
   });
 }
 
-function computeRetryDelaySeconds(attemptCount) {
+function computeExponentialRetryDelaySeconds(attemptCount) {
   const exponent = Math.max(0, Number(attemptCount || 1) - 1);
   const delay = PRINT_RETRY_BASE_SECONDS * (2 ** exponent);
   return Math.min(PRINT_RETRY_MAX_SECONDS, delay);
+}
+
+function getReadyFailWindowMinutes(job) {
+  return job?.reprintOfJobId
+    ? PRINT_REPRINT_READY_FAIL_AFTER_MINUTES
+    : PRINT_READY_FAIL_AFTER_MINUTES;
+}
+
+function computeRetryDelaySeconds(job, now = new Date()) {
+  const scheduledAt = new Date(job?.scheduledAt || 0);
+  if (Number.isNaN(scheduledAt.getTime())) {
+    return computeExponentialRetryDelaySeconds(job?.attemptCount);
+  }
+
+  const windowMinutes = getReadyFailWindowMinutes(job);
+  const remainingAttempts = Math.max(
+    0,
+    Number(job?.maxAttempts || 0) - Number(job?.attemptCount || 0)
+  );
+  const retryWindowDeadlineMs = scheduledAt.getTime() + windowMinutes * 60_000;
+  const remainingWindowMs = retryWindowDeadlineMs - now.getTime();
+
+  if (remainingAttempts <= 0 || remainingWindowMs <= 0) {
+    return null;
+  }
+
+  const evenlySpacedSeconds = Math.ceil(
+    remainingWindowMs / remainingAttempts / 1000
+  );
+
+  return Math.max(1, Math.min(PRINT_RETRY_MAX_SECONDS, evenlySpacedSeconds));
 }
 
 async function markPrintJobFailure(agent, jobId, payload = {}) {
@@ -1075,11 +1131,30 @@ async function markPrintJobFailure(agent, jobId, payload = {}) {
       throw createError("Print job is not claimable", 409, "PRINT_JOB_INVALID_STATE");
     }
 
-    const shouldRetry = retryable && job.attemptCount < job.maxAttempts;
+    const now = new Date();
+    const windowMinutes = getReadyFailWindowMinutes(job);
+    const retryWindowDeadline = new Date(
+      new Date(job.scheduledAt).getTime() + windowMinutes * 60_000
+    );
+    const hasAttemptsRemaining = Number(job.attemptCount || 0) < Number(job.maxAttempts || 0);
+    const retryWindowActive = Number.isNaN(retryWindowDeadline.getTime())
+      ? true
+      : retryWindowDeadline.getTime() > now.getTime();
+    const retryDelaySeconds = retryable ? computeRetryDelaySeconds(job, now) : null;
+    const shouldRetry =
+      retryable &&
+      hasAttemptsRemaining &&
+      retryWindowActive &&
+      retryDelaySeconds !== null;
     const nextStatus = shouldRetry ? PrintJobStatus.RETRY_WAITING : PrintJobStatus.FAILED;
-    const retryDelaySeconds = shouldRetry ? computeRetryDelaySeconds(job.attemptCount) : null;
     const nextRetryAt = shouldRetry
-      ? new Date(Date.now() + retryDelaySeconds * 1000)
+      ? (() => {
+          const retryDueMs = now.getTime() + retryDelaySeconds * 1000;
+          if (Number.isNaN(retryWindowDeadline.getTime())) {
+            return new Date(retryDueMs);
+          }
+          return new Date(Math.min(retryWindowDeadline.getTime(), retryDueMs));
+        })()
       : null;
 
     const updated = await tx.printJob.update({
@@ -1087,7 +1162,7 @@ async function markPrintJobFailure(agent, jobId, payload = {}) {
       data: {
         status: nextStatus,
         nextRetryAt,
-        failedAt: shouldRetry ? null : new Date(),
+        failedAt: shouldRetry ? null : now,
         lastErrorCode: errorCode,
         lastErrorMessage: errorMessage,
         claimedByAgentId: null,
@@ -1463,22 +1538,76 @@ async function runPrintSchedulerTick() {
     },
   });
 
-  const reclaimStale = await prisma.printJob.updateMany({
+  const staleClaimedJobs = await prisma.printJob.findMany({
     where: {
       status: { in: [PrintJobStatus.CLAIMED, PrintJobStatus.PRINTING] },
       lockedUntil: { lt: now },
       cancelledAt: null,
     },
-    data: {
-      status: PrintJobStatus.RETRY_WAITING,
-      nextRetryAt: now,
-      claimedByAgentId: null,
-      claimToken: null,
-      lockedUntil: null,
-      lastErrorCode: "CLAIM_TIMEOUT",
-      lastErrorMessage: "Claim expired before print acknowledgement",
+    select: {
+      id: true,
+      attemptCount: true,
+      maxAttempts: true,
+      scheduledAt: true,
+      reprintOfJobId: true,
     },
   });
+
+  const staleClaimedToRetryIds = [];
+  const staleClaimedToFailedIds = [];
+
+  for (const job of staleClaimedJobs) {
+    const retryWindowDeadline = new Date(
+      new Date(job.scheduledAt).getTime() + getReadyFailWindowMinutes(job) * 60_000
+    );
+    const maxAttemptsReached = Number(job.attemptCount || 0) >= Number(job.maxAttempts || 0);
+    const retryWindowExpired = retryWindowDeadline.getTime() <= now.getTime();
+    if (maxAttemptsReached || retryWindowExpired) {
+      staleClaimedToFailedIds.push(job.id);
+    } else {
+      staleClaimedToRetryIds.push(job.id);
+    }
+  }
+
+  let reclaimStaleRetryCount = 0;
+  let reclaimStaleFailedCount = 0;
+
+  if (staleClaimedToRetryIds.length > 0) {
+    const reclaimStaleToRetry = await prisma.printJob.updateMany({
+      where: {
+        id: { in: staleClaimedToRetryIds },
+      },
+      data: {
+        status: PrintJobStatus.RETRY_WAITING,
+        nextRetryAt: now,
+        claimedByAgentId: null,
+        claimToken: null,
+        lockedUntil: null,
+        lastErrorCode: "CLAIM_TIMEOUT",
+        lastErrorMessage: "Claim expired before print acknowledgement",
+      },
+    });
+    reclaimStaleRetryCount = reclaimStaleToRetry.count;
+  }
+
+  if (staleClaimedToFailedIds.length > 0) {
+    const reclaimStaleToFailed = await prisma.printJob.updateMany({
+      where: {
+        id: { in: staleClaimedToFailedIds },
+      },
+      data: {
+        status: PrintJobStatus.FAILED,
+        failedAt: now,
+        nextRetryAt: null,
+        claimedByAgentId: null,
+        claimToken: null,
+        lockedUntil: null,
+        lastErrorCode: "CLAIM_TIMEOUT",
+        lastErrorMessage: "Claim expired and retry policy exhausted",
+      },
+    });
+    reclaimStaleFailedCount = reclaimStaleToFailed.count;
+  }
 
   const readyToFailedReprints = await prisma.printJob.updateMany({
     where: {
@@ -1556,7 +1685,8 @@ async function runPrintSchedulerTick() {
   return {
     pending_to_ready: pendingToReady.count,
     retry_to_ready: retryToReady.count,
-    stale_reclaimed: reclaimStale.count,
+    stale_reclaimed: reclaimStaleRetryCount,
+    stale_failed: reclaimStaleFailedCount,
     ready_to_failed: readyToFailed,
     ready_to_failed_reprints: readyToFailedReprints.count,
     ready_to_failed_primary: readyToFailedPrimary.count,
