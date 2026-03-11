@@ -19,6 +19,7 @@ const {
   PRINT_JOB_CLEANUP_INTERVAL_MS,
   PRINT_READY_ALERT_AFTER_MINUTES,
   PRINT_READY_FAIL_AFTER_MINUTES,
+  PRINT_REPRINT_READY_FAIL_AFTER_MINUTES,
 } = require("../lib/env");
 const { normalizeCustomizations } = require("../utils/customizations");
 const { DELETED_PRODUCT_FALLBACK_NAME } = require("../utils/product");
@@ -1435,6 +1436,9 @@ async function runPrintSchedulerTick() {
   const now = new Date();
   const nowMs = now.getTime();
   const readyFailBefore = new Date(now.getTime() - PRINT_READY_FAIL_AFTER_MINUTES * 60_000);
+  const reprintReadyFailBefore = new Date(
+    now.getTime() - PRINT_REPRINT_READY_FAIL_AFTER_MINUTES * 60_000
+  );
 
   const pendingToReady = await prisma.printJob.updateMany({
     where: {
@@ -1476,9 +1480,25 @@ async function runPrintSchedulerTick() {
     },
   });
 
-  const readyToFailed = await prisma.printJob.updateMany({
+  const readyToFailedReprints = await prisma.printJob.updateMany({
     where: {
       status: PrintJobStatus.READY,
+      reprintOfJobId: { not: null },
+      scheduledAt: { lte: reprintReadyFailBefore },
+      cancelledAt: null,
+    },
+    data: {
+      status: PrintJobStatus.FAILED,
+      failedAt: now,
+      lastErrorCode: "READY_TIMEOUT",
+      lastErrorMessage: `Reprint job stayed READY for more than ${PRINT_REPRINT_READY_FAIL_AFTER_MINUTES} minutes`,
+    },
+  });
+
+  const readyToFailedPrimary = await prisma.printJob.updateMany({
+    where: {
+      status: PrintJobStatus.READY,
+      reprintOfJobId: null,
       scheduledAt: { lte: readyFailBefore },
       cancelledAt: null,
     },
@@ -1489,6 +1509,8 @@ async function runPrintSchedulerTick() {
       lastErrorMessage: `Job stayed READY for more than ${PRINT_READY_FAIL_AFTER_MINUTES} minutes`,
     },
   });
+
+  const readyToFailed = readyToFailedReprints.count + readyToFailedPrimary.count;
 
   const staleAgentThreshold = new Date(now.getTime() - PRINT_AGENT_OFFLINE_AFTER_MS);
   const staleAgentsToOffline = await prisma.printAgent.updateMany({
@@ -1527,7 +1549,9 @@ async function runPrintSchedulerTick() {
     pending_to_ready: pendingToReady.count,
     retry_to_ready: retryToReady.count,
     stale_reclaimed: reclaimStale.count,
-    ready_to_failed: readyToFailed.count,
+    ready_to_failed: readyToFailed,
+    ready_to_failed_reprints: readyToFailedReprints.count,
+    ready_to_failed_primary: readyToFailedPrimary.count,
     stale_agents_to_offline: staleAgentsToOffline.count,
     printed_deleted,
   };
