@@ -61,17 +61,11 @@ function toIsoDate(value) {
 
 function renderUrlTag(baseUrl, entry) {
   const url = `${baseUrl}${entry.path}`;
-  const lines = [
+  return [
     "  <url>",
     `    <loc>${xmlEscape(url)}</loc>`,
-  ];
-
-  if (entry.lastmod) {
-    lines.push(`    <lastmod>${entry.lastmod}</lastmod>`);
-  }
-
-  lines.push("  </url>");
-  return lines.join("\n");
+    "  </url>",
+  ].join("\n");
 }
 
 async function getSeoLocationCatalog() {
