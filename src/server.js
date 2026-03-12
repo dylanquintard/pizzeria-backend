@@ -66,6 +66,8 @@ const galleryRoutes = require("./routes/gallery.routes");
 const contactRoutes = require("./routes/contact.routes");
 const realtimeRoutes = require("./routes/realtime.routes");
 const printRoutes = require("./routes/print.routes");
+const seoRoutes = require("./routes/seo.routes");
+const seoController = require("./controllers/seo.controller");
 const { startPrintScheduler, stopPrintScheduler } = require("./services/print.service");
 
 app.use("/api/products", productRoutes);
@@ -78,6 +80,8 @@ app.use("/api/gallery", galleryRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/realtime", realtimeRoutes);
 app.use("/api/print", printRoutes);
+app.use("/api/seo", seoRoutes);
+app.get("/sitemap.xml", seoController.getSitemapXml);
 
 app.get("/", (_req, res) => {
   res.send("API Pizzeria running");

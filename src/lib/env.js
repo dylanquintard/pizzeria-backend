@@ -174,6 +174,15 @@ const CORS_ORIGINS = (process.env.CORS_ORIGIN || "https://pizzeria-front-dqty.on
   .split(",")
   .map((item) => normalizeOrigin(item))
   .filter(Boolean);
+const FRONTEND_SITE_URL = parseOptionalHttpUrl(
+  process.env.FRONTEND_SITE_URL || "https://pizzeria-front-dqty.onrender.com",
+  "FRONTEND_SITE_URL"
+);
+const SITEMAP_CACHE_SECONDS = parsePositiveInt(
+  process.env.SITEMAP_CACHE_SECONDS,
+  "SITEMAP_CACHE_SECONDS",
+  300
+);
 
 module.exports = {
   NODE_ENV,
@@ -204,4 +213,6 @@ module.exports = {
   PRINT_READY_ALERT_AFTER_MINUTES,
   PRINT_READY_FAIL_AFTER_MINUTES,
   PRINT_REPRINT_READY_FAIL_AFTER_MINUTES,
+  FRONTEND_SITE_URL,
+  SITEMAP_CACHE_SECONDS,
 };
