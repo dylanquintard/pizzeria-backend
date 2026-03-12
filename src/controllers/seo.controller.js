@@ -1,5 +1,6 @@
 const { SITEMAP_CACHE_SECONDS } = require("../lib/env");
 const seoService = require("../services/seo.service");
+const { BLOG_SLUGS } = require("../seo/blogSlugs");
 
 async function getSitemapXml(_req, res) {
   try {
@@ -15,6 +16,13 @@ async function getSitemapXml(_req, res) {
   }
 }
 
+function getBlogSlugs(_req, res) {
+  res.json({
+    slugs: BLOG_SLUGS,
+  });
+}
+
 module.exports = {
   getSitemapXml,
+  getBlogSlugs,
 };

@@ -1,5 +1,6 @@
 const prisma = require("../lib/prisma");
 const { FRONTEND_SITE_URL } = require("../lib/env");
+const { BLOG_SLUGS } = require("../seo/blogSlugs");
 
 const SPECIAL_CITY_PATHS = {
   thionville: "/pizza-napolitaine-thionville",
@@ -17,14 +18,6 @@ const STATIC_PATHS = [
   "/pizza-napolitaine-thionville",
   "/pizza-napolitaine-metz",
   "/food-truck-pizza-moselle",
-];
-
-const BLOG_SLUGS = [
-  "pourquoi-la-pizza-napolitaine-est-differente",
-  "la-cuisson-au-feu-de-bois",
-  "les-ingredients-italiens-authentiques",
-  "la-farine-nuvola-super",
-  "tomates-san-marzano",
 ];
 
 function normalizeBaseUrl(value) {
