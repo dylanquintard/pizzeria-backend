@@ -15,6 +15,10 @@ const app = express();
 app.disable("x-powered-by");
 if (TRUST_PROXY) app.set("trust proxy", 1);
 
+const GOOGLE_SITE_VERIFICATION_FILE = "googlef435f264d8416a8b.html";
+const GOOGLE_SITE_VERIFICATION_CONTENT =
+  "google-site-verification: googlef435f264d8416a8b.html";
+
 const normalizeOrigin = (origin) => String(origin || "").trim().replace(/\/+$/, "");
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
@@ -82,6 +86,9 @@ app.use("/api/realtime", realtimeRoutes);
 app.use("/api/print", printRoutes);
 app.use("/api/seo", seoRoutes);
 app.get("/sitemap.xml", seoController.getSitemapXml);
+app.get(`/${GOOGLE_SITE_VERIFICATION_FILE}`, (_req, res) => {
+  res.type("text/plain; charset=utf-8").send(GOOGLE_SITE_VERIFICATION_CONTENT);
+});
 
 app.get("/", (_req, res) => {
   res.send("API Pizzeria running");
