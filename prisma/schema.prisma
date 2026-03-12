@@ -108,13 +108,17 @@ model TimeSlot {
   active        Boolean   @default(true)
   serviceDate   DateTime
   locationId    Int?
+  agentId       Int?
   location      Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  agent         PrintAgent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
   orders        Order[]
 
   @@index([serviceDate])
   @@index([active, startTime])
   @@index([locationId])
+  @@index([agentId])
   @@index([locationId, serviceDate, startTime])
+  @@index([agentId, serviceDate, startTime])
 }
 
 model Order {
@@ -179,10 +183,25 @@ model PrintAgent {
   metadata        Json?
   printers        Printer[]
   claimedJobs     PrintJob[]        @relation("ClaimedPrintJobs")
+  timeSlots       TimeSlot[]
+  closures        PrintAgentClosure[]
   attempts        PrintJobAttempt[]
   logs            PrintLog[]
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
+}
+
+model PrintAgentClosure {
+  id          Int        @id @default(autoincrement())
+  agentId     Int
+  startDate   DateTime
+  endDate     DateTime
+  reason      String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  agent       PrintAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, startDate, endDate])
 }
 
 model Printer {

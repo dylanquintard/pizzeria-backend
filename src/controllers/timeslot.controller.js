@@ -31,6 +31,7 @@ async function upsertWeeklySetting(req, res) {
       dayOfWeek: setting?.dayOfWeek || String(req.params.dayOfWeek || "").toUpperCase(),
       isOpen: Boolean(setting?.isOpen),
       locationId: setting?.locationId || null,
+      agentId: setting?.agentId || null,
     });
 
     res.json(setting);
@@ -67,10 +68,53 @@ async function getPickupAvailability(req, res) {
   }
 }
 
+async function listTruckClosures(_req, res) {
+  try {
+    const closures = await timeSlotService.listTruckClosures();
+    res.json(closures);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function createTruckClosure(req, res) {
+  try {
+    const closure = await timeSlotService.createTruckClosure(req.body || {});
+
+    emitRealtimeEvent("timeslots:updated", {
+      type: "timeslot-truck-closure-created",
+      closureId: closure?.id || null,
+      agentId: closure?.agentId || null,
+    });
+
+    res.status(201).json(closure);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+async function deleteTruckClosure(req, res) {
+  try {
+    const result = await timeSlotService.deleteTruckClosure(req.params.closureId);
+
+    emitRealtimeEvent("timeslots:updated", {
+      type: "timeslot-truck-closure-deleted",
+      closureId: Number(req.params.closureId) || null,
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getWeeklySettings,
   getPublicWeeklySettings,
   upsertWeeklySetting,
   removeWeeklyService,
   getPickupAvailability,
+  listTruckClosures,
+  createTruckClosure,
+  deleteTruckClosure,
 };

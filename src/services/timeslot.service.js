@@ -36,11 +36,39 @@ function parseOptionalPositiveInt(value, fieldName) {
   return parsePositiveInt(value, fieldName);
 }
 
+function parseOptionalText(value, fieldName, maxLength = 255) {
+  if (value === undefined || value === null) return null;
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+  if (normalized.length > maxLength) {
+    throw new Error(`${fieldName} is too long`);
+  }
+  return normalized;
+}
+
+const TIMESLOT_INCLUDE = {
+  location: true,
+  agent: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      status: true,
+    },
+  },
+};
+
 async function assertLocationExists(locationId) {
   const location = await prisma.location.findUnique({ where: { id: locationId } });
   if (!location) throw new Error("Location not found");
   if (!location.active) throw new Error("Location must be active");
   return location;
+}
+
+async function assertPrintAgentExists(agentId) {
+  const agent = await prisma.printAgent.findUnique({ where: { id: agentId } });
+  if (!agent) throw new Error("Print agent not found");
+  return agent;
 }
 
 function buildTemplateRows({
@@ -50,6 +78,7 @@ function buildTemplateRows({
   slotDuration,
   maxPizzas,
   locationId,
+  agentId,
 }) {
   const anchorDate = getAnchorDateForDay(dayOfWeek);
   const range = getDateRange(anchorDate);
@@ -76,6 +105,7 @@ function buildTemplateRows({
       active: true,
       serviceDate: range.start,
       locationId,
+      agentId,
     });
 
     if (nextEnd.getTime() >= lastEnd.getTime()) break;
@@ -95,6 +125,8 @@ function closedSetting(dayOfWeek) {
     maxPizzas: null,
     locationId: null,
     location: null,
+    agentId: null,
+    agent: null,
     slotsCount: 0,
     services: [],
   };
@@ -103,60 +135,81 @@ function closedSetting(dayOfWeek) {
 function buildServiceEntries(dayOfWeek, slots) {
   if (!Array.isArray(slots) || slots.length === 0) return [];
 
-  const ordered = [...slots].sort((a, b) => {
-    const startDiff = new Date(a.startTime) - new Date(b.startTime);
-    if (startDiff !== 0) return startDiff;
-    const locationDiff = Number(a.locationId || 0) - Number(b.locationId || 0);
-    if (locationDiff !== 0) return locationDiff;
-    return Number(a.id || 0) - Number(b.id || 0);
-  });
-
-  const services = [];
-  let current = null;
-
-  for (const slot of ordered) {
-    const slotStart = new Date(slot.startTime);
-    const slotEnd = new Date(slot.endTime);
+  const byMergeKey = new Map();
+  for (const slot of slots) {
     const slotDuration = Math.max(1, minutesBetween(slot.startTime, slot.endTime));
+    const mergeKey = `${slot.locationId || "none"}|${slot.agentId || "none"}|${slot.maxPizzas}|${slotDuration}`;
 
-    const canMerge =
-      current &&
-      Number(current.locationId || 0) === Number(slot.locationId || 0) &&
-      Number(current.maxPizzas || 0) === Number(slot.maxPizzas || 0) &&
-      Number(current.slotDuration || 0) === Number(slotDuration || 0) &&
-      current._lastEnd.getTime() === slotStart.getTime();
+    if (!byMergeKey.has(mergeKey)) {
+      byMergeKey.set(mergeKey, []);
+    }
+    byMergeKey.get(mergeKey).push(slot);
+  }
 
-    if (canMerge) {
-      current.endTime = formatTimeValue(slotEnd);
-      current.slotsCount += 1;
-      current._lastEnd = slotEnd;
-      continue;
+  const mergedServices = [];
+
+  for (const groupSlots of byMergeKey.values()) {
+    const ordered = [...groupSlots].sort((a, b) => {
+      const startDiff = new Date(a.startTime) - new Date(b.startTime);
+      if (startDiff !== 0) return startDiff;
+      return Number(a.id || 0) - Number(b.id || 0);
+    });
+
+    let current = null;
+
+    for (const slot of ordered) {
+      const slotStart = new Date(slot.startTime);
+      const slotEnd = new Date(slot.endTime);
+      const slotDuration = Math.max(1, minutesBetween(slot.startTime, slot.endTime));
+
+      const canMerge =
+        current &&
+        current._lastEnd.getTime() === slotStart.getTime();
+
+      if (canMerge) {
+        current.endTime = formatTimeValue(slotEnd);
+        current.slotsCount += 1;
+        current._lastEnd = slotEnd;
+        continue;
+      }
+
+      if (current) {
+        delete current._lastEnd;
+        mergedServices.push(current);
+      }
+
+      current = {
+        id: `${dayOfWeek}-${slot.locationId || "none"}-${slot.agentId || "none"}-${formatTimeValue(slotStart)}-${formatTimeValue(slotEnd)}-${slot.maxPizzas}-${slotDuration}`,
+        startTime: formatTimeValue(slotStart),
+        endTime: formatTimeValue(slotEnd),
+        slotDuration,
+        maxPizzas: slot.maxPizzas,
+        locationId: slot.locationId,
+        location: slot.location || null,
+        agentId: slot.agentId || null,
+        agent: slot.agent || null,
+        slotsCount: 1,
+        _lastEnd: slotEnd,
+      };
     }
 
     if (current) {
       delete current._lastEnd;
-      services.push(current);
+      mergedServices.push(current);
     }
-
-    current = {
-      id: `${dayOfWeek}-${slot.locationId || "none"}-${formatTimeValue(slotStart)}-${formatTimeValue(slotEnd)}-${slot.maxPizzas}-${slotDuration}`,
-      startTime: formatTimeValue(slotStart),
-      endTime: formatTimeValue(slotEnd),
-      slotDuration,
-      maxPizzas: slot.maxPizzas,
-      locationId: slot.locationId,
-      location: slot.location || null,
-      slotsCount: 1,
-      _lastEnd: slotEnd,
-    };
   }
 
-  if (current) {
-    delete current._lastEnd;
-    services.push(current);
-  }
-
-  return services;
+  return mergedServices.sort((a, b) => {
+    const startDiff =
+      buildDateTime(getAnchorDateForDay(dayOfWeek), a.startTime, "startTime") -
+      buildDateTime(getAnchorDateForDay(dayOfWeek), b.startTime, "startTime");
+    if (startDiff !== 0) return startDiff;
+    const locationDiff = Number(a.locationId || 0) - Number(b.locationId || 0);
+    if (locationDiff !== 0) return locationDiff;
+    const agentDiff = Number(a.agentId || 0) - Number(b.agentId || 0);
+    if (agentDiff !== 0) return agentDiff;
+    return String(a.id).localeCompare(String(b.id));
+  });
 }
 
 function buildWeeklySetting(dayOfWeek, slots) {
@@ -178,6 +231,8 @@ function buildWeeklySetting(dayOfWeek, slots) {
     maxPizzas: first.maxPizzas,
     locationId: first.locationId,
     location: first.location || null,
+    agentId: first.agentId || null,
+    agent: first.agent || null,
     slotsCount: totalSlots,
     services,
   };
@@ -195,7 +250,7 @@ async function getWeeklySettingByDay(dayOfWeek) {
         lt: range.end,
       },
     },
-    include: { location: true },
+    include: TIMESLOT_INCLUDE,
     orderBy: [{ startTime: "asc" }, { id: "asc" }],
   });
 
@@ -210,7 +265,7 @@ async function getWeeklySettings() {
         lt: ANCHOR_WEEK_END,
       },
     },
-    include: { location: true },
+    include: TIMESLOT_INCLUDE,
     orderBy: [{ serviceDate: "asc" }, { startTime: "asc" }, { id: "asc" }],
   });
 
@@ -256,8 +311,12 @@ async function upsertWeeklySetting(dayOfWeek, payload = {}) {
   if (!locationId) {
     throw new Error("locationId is required");
   }
+  const agentId = parseOptionalPositiveInt(payload.agentId, "agentId");
 
   await assertLocationExists(locationId);
+  if (agentId) {
+    await assertPrintAgentExists(agentId);
+  }
 
   const serviceStart = buildDateTime(anchorDate, payload.startTime, "startTime");
   const serviceEnd = buildDateTime(anchorDate, payload.endTime, "endTime");
@@ -289,6 +348,7 @@ async function upsertWeeklySetting(dayOfWeek, payload = {}) {
     slotDuration: payload.slotDuration,
     maxPizzas: payload.maxPizzas,
     locationId,
+    agentId: agentId || null,
   });
 
   await prisma.timeSlot.createMany({ data: templateRows });
@@ -346,6 +406,33 @@ function buildConcreteReservationMap(slots = []) {
   return reservedByKey;
 }
 
+async function getClosedAgentIdsForDate(dbClient, serviceDate, candidateAgentIds = []) {
+  const normalizedDate = parseIsoDate(serviceDate, "serviceDate");
+  const agentIds = [...new Set(candidateAgentIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
+  if (agentIds.length === 0) return new Set();
+
+  const closures = await dbClient.printAgentClosure.findMany({
+    where: {
+      agentId: { in: agentIds },
+      startDate: { lte: normalizedDate },
+      endDate: { gte: normalizedDate },
+    },
+    select: { agentId: true },
+  });
+
+  return new Set(closures.map((entry) => Number(entry.agentId)));
+}
+
+async function assertAgentOpenForDate(dbClient, agentId, serviceDate) {
+  const parsedAgentId = parseOptionalPositiveInt(agentId, "agentId");
+  if (!parsedAgentId) return;
+
+  const closedAgentIds = await getClosedAgentIdsForDate(dbClient, serviceDate, [parsedAgentId]);
+  if (closedAgentIds.has(parsedAgentId)) {
+    throw new Error("Selected pickup slot is unavailable (truck closed)");
+  }
+}
+
 async function getPickupAvailability(params = {}) {
   const requestedDate = parseIsoDate(params.date || new Date(), "date");
   const requestedQuantity =
@@ -366,7 +453,7 @@ async function getPickupAvailability(params = {}) {
         active: true,
         locationId: { not: null },
       },
-      include: { location: true },
+      include: TIMESLOT_INCLUDE,
       orderBy: [{ startTime: "asc" }, { id: "asc" }],
     }),
     prisma.timeSlot.findMany({
@@ -385,11 +472,21 @@ async function getPickupAvailability(params = {}) {
     }),
   ]);
 
+  const closedAgentIds = await getClosedAgentIdsForDate(
+    prisma,
+    requestedDate,
+    templateSlots.map((slot) => slot.agentId)
+  );
+
   const reservedByKey = buildConcreteReservationMap(concreteSlots);
   const minStartTime = new Date(Date.now() + 30 * 60_000);
 
   const slots = templateSlots
-    .filter((slot) => slot.location && slot.location.active)
+    .filter((slot) => {
+      if (!slot.location || !slot.location.active) return false;
+      if (slot.agentId && closedAgentIds.has(Number(slot.agentId))) return false;
+      return true;
+    })
     .map((templateSlot) => {
       const pickupTime = formatTimeValue(templateSlot.startTime);
       const concreteStart = buildDateTime(requestedDate, pickupTime, "pickupTime");
@@ -414,6 +511,8 @@ async function getPickupAvailability(params = {}) {
         availableForQuantity: remainingCapacity >= requestedQuantity,
         locationId: templateSlot.locationId,
         location: templateSlot.location,
+        agentId: templateSlot.agentId || null,
+        agent: templateSlot.agent || null,
       };
     })
     .filter((slot) => slot.startTime >= minStartTime)
@@ -475,6 +574,8 @@ async function findOrCreateConcreteSlotForPickup(
     throw new Error("Selected pickup slot is not available");
   }
 
+  await assertAgentOpenForDate(dbClient, templateSlot.agentId, serviceDate);
+
   const slotDuration = Math.max(1, minutesBetween(templateSlot.startTime, templateSlot.endTime));
   const concreteEndTime = new Date(concreteStartTime.getTime() + slotDuration * 60_000);
 
@@ -502,6 +603,7 @@ async function findOrCreateConcreteSlotForPickup(
         active: true,
         serviceDate: concreteRange.start,
         locationId: parsedLocationId,
+        agentId: templateSlot.agentId || null,
       },
     });
   }
@@ -530,6 +632,77 @@ async function findOrCreateConcreteSlotForPickup(
   return primarySlot;
 }
 
+async function listTruckClosures() {
+  return prisma.printAgentClosure.findMany({
+    include: {
+      agent: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          status: true,
+        },
+      },
+    },
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+  });
+}
+
+async function createTruckClosure(payload = {}) {
+  const agentId = parsePositiveInt(payload.agentId, "agentId");
+  const startDate = parseIsoDate(payload.startDate, "startDate");
+  const endDate = parseIsoDate(payload.endDate, "endDate");
+  const reason = parseOptionalText(payload.reason, "reason", 500);
+
+  if (endDate < startDate) {
+    throw new Error("endDate must be after or equal to startDate");
+  }
+
+  await assertPrintAgentExists(agentId);
+
+  const overlapCount = await prisma.printAgentClosure.count({
+    where: {
+      agentId,
+      startDate: { lte: endDate },
+      endDate: { gte: startDate },
+    },
+  });
+  if (overlapCount > 0) {
+    throw new Error("A closure already exists for this truck in the selected range");
+  }
+
+  return prisma.printAgentClosure.create({
+    data: {
+      agentId,
+      startDate,
+      endDate,
+      reason,
+    },
+    include: {
+      agent: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          status: true,
+        },
+      },
+    },
+  });
+}
+
+async function deleteTruckClosure(closureId) {
+  const id = parsePositiveInt(closureId, "closureId");
+
+  const existing = await prisma.printAgentClosure.findUnique({ where: { id } });
+  if (!existing) {
+    throw new Error("Truck closure not found");
+  }
+
+  await prisma.printAgentClosure.delete({ where: { id } });
+  return { ok: true, deletedId: id };
+}
+
 module.exports = {
   getWeeklySettings,
   upsertWeeklySetting,
@@ -537,4 +710,7 @@ module.exports = {
   getPickupAvailability,
   getTemplateSlotForPickupSelection,
   findOrCreateConcreteSlotForPickup,
+  listTruckClosures,
+  createTruckClosure,
+  deleteTruckClosure,
 };

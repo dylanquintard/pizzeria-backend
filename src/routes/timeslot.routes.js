@@ -23,6 +23,24 @@ router.delete(
   adminMiddleware,
   timeSlotController.removeWeeklyService
 );
+router.get(
+  "/closures",
+  authMiddleware,
+  adminMiddleware,
+  timeSlotController.listTruckClosures
+);
+router.post(
+  "/closures",
+  authMiddleware,
+  adminMiddleware,
+  timeSlotController.createTruckClosure
+);
+router.delete(
+  "/closures/:closureId",
+  authMiddleware,
+  adminMiddleware,
+  timeSlotController.deleteTruckClosure
+);
 
 router.get("/availability", authMiddleware, timeSlotController.getPickupAvailability);
 
