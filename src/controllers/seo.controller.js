@@ -22,7 +22,17 @@ function getBlogSlugs(_req, res) {
   });
 }
 
+async function getSeoLocations(_req, res) {
+  try {
+    const locations = await seoService.getSeoLocationCatalog();
+    res.json({ locations });
+  } catch (_err) {
+    res.status(500).json({ error: "Unable to load SEO locations" });
+  }
+}
+
 module.exports = {
   getSitemapXml,
   getBlogSlugs,
+  getSeoLocations,
 };

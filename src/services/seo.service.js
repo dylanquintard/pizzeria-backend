@@ -39,6 +39,10 @@ function buildCityPath(cityName) {
   return SPECIAL_CITY_PATHS[slug] || `/pizza-${slug}`;
 }
 
+function buildCitySlug(cityName) {
+  return slugify(cityName);
+}
+
 function xmlEscape(value) {
   return String(value || "")
     .replaceAll("&", "&amp;")
@@ -70,10 +74,11 @@ function renderUrlTag(baseUrl, entry) {
   return lines.join("\n");
 }
 
-async function getDynamicCityEntries() {
+async function getSeoLocationCatalog() {
   const locations = await prisma.location.findMany({
     where: { active: true },
     select: {
+      id: true,
       name: true,
       city: true,
       updatedAt: true,
@@ -84,20 +89,39 @@ async function getDynamicCityEntries() {
   const pathToEntry = new Map();
 
   for (const location of locations) {
-    const candidates = [location?.name, location?.city].filter(Boolean);
+    const candidates = [location?.city, location?.name].filter(Boolean);
     for (const candidate of candidates) {
+      const slug = buildCitySlug(candidate);
       const path = buildCityPath(candidate);
       if (!path) continue;
+      if (!slug) continue;
 
       const lastmod = toIsoDate(location.updatedAt);
+      const label = String(candidate).trim();
       if (!pathToEntry.has(path)) {
-        pathToEntry.set(path, { path, lastmod });
+        pathToEntry.set(path, {
+          locationId: Number(location.id),
+          slug,
+          path,
+          label,
+          lastmod,
+        });
         continue;
       }
 
       const existing = pathToEntry.get(path);
-      if (!existing.lastmod || (lastmod && existing.lastmod < lastmod)) {
-        pathToEntry.set(path, { path, lastmod });
+      const shouldReplace =
+        !existing.lastmod ||
+        (lastmod && existing.lastmod < lastmod) ||
+        (!existing.label && label);
+      if (shouldReplace) {
+        pathToEntry.set(path, {
+          locationId: Number(location.id),
+          slug,
+          path,
+          label,
+          lastmod,
+        });
       }
     }
   }
@@ -109,7 +133,7 @@ async function buildSitemapXml() {
   const baseUrl = normalizeBaseUrl(FRONTEND_SITE_URL);
   const staticEntries = STATIC_PATHS.map((path) => ({ path }));
   const blogEntries = BLOG_SLUGS.map((slug) => ({ path: `/blog/${slug}` }));
-  const dynamicEntries = await getDynamicCityEntries();
+  const dynamicEntries = await getSeoLocationCatalog();
 
   const deduped = new Map();
   for (const entry of [...staticEntries, ...blogEntries, ...dynamicEntries]) {
@@ -138,4 +162,5 @@ async function buildSitemapXml() {
 
 module.exports = {
   buildSitemapXml,
+  getSeoLocationCatalog,
 };

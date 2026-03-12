@@ -5,5 +5,6 @@ const router = express.Router();
 
 router.get("/sitemap.xml", seoController.getSitemapXml);
 router.get("/blog-slugs", seoController.getBlogSlugs);
+router.get("/locations", seoController.getSeoLocations);
 
 module.exports = router;
