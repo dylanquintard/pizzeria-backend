@@ -170,12 +170,16 @@ if (PRINT_READY_FAIL_AFTER_MINUTES < PRINT_READY_ALERT_AFTER_MINUTES) {
 if (AUTH_COOKIE_SAMESITE === "none" && !AUTH_COOKIE_SECURE) {
   throw new Error("AUTH_COOKIE_SECURE must be true when AUTH_COOKIE_SAMESITE is 'none'");
 }
-const CORS_ORIGINS = (process.env.CORS_ORIGIN || "https://pizzeria-front-dqty.onrender.com,http://localhost:3000/")
+const CORS_ORIGINS = (
+  process.env.CORS_ORIGIN ||
+  "https://eazytoolz.site,https://www.eazytoolz.site"
+)
   .split(",")
   .map((item) => normalizeOrigin(item))
   .filter(Boolean);
+
 const FRONTEND_SITE_URL = parseOptionalHttpUrl(
-  process.env.FRONTEND_SITE_URL || "https://pizzeria-front-dqty.onrender.com",
+  process.env.FRONTEND_SITE_URL || "https://eazytoolz.site",
   "FRONTEND_SITE_URL"
 );
 const SITEMAP_CACHE_SECONDS = parsePositiveInt(
