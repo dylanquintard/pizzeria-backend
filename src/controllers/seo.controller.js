@@ -1,6 +1,6 @@
 const { SITEMAP_CACHE_SECONDS } = require("../lib/env");
 const seoService = require("../services/seo.service");
-const { BLOG_SLUGS } = require("../seo/blogSlugs");
+const blogService = require("../services/blog.service");
 
 async function getSitemapXml(_req, res) {
   try {
@@ -16,10 +16,22 @@ async function getSitemapXml(_req, res) {
   }
 }
 
-function getBlogSlugs(_req, res) {
-  res.json({
-    slugs: BLOG_SLUGS,
-  });
+async function getBlogSlugs(_req, res) {
+  try {
+    const slugs = await blogService.getPublishedBlogSlugs();
+    res.json({ slugs });
+  } catch (_err) {
+    res.status(500).json({ error: "Unable to load blog slugs" });
+  }
+}
+
+async function getSeoBlogArticles(_req, res) {
+  try {
+    const articles = await blogService.getSeoBlogArticles();
+    res.json({ articles });
+  } catch (_err) {
+    res.status(500).json({ error: "Unable to load blog articles" });
+  }
 }
 
 async function getSeoLocations(_req, res) {
@@ -34,5 +46,6 @@ async function getSeoLocations(_req, res) {
 module.exports = {
   getSitemapXml,
   getBlogSlugs,
+  getSeoBlogArticles,
   getSeoLocations,
 };

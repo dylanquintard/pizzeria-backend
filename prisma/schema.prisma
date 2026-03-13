@@ -171,6 +171,51 @@ model HomeGalleryImage {
   @@index([active, isHomeBackground, sortOrder])
 }
 
+model BlogArticle {
+  id          Int             @id @default(autoincrement())
+  title       String
+  slug        String          @unique
+  description String          @db.Text
+  metaTitle   String?
+  metaDescription String?     @db.Text
+  published   Boolean         @default(true)
+  publishedAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  paragraphs  BlogParagraph[]
+  images      BlogImage[]
+
+  @@index([published, publishedAt, updatedAt])
+}
+
+model BlogParagraph {
+  id        Int         @id @default(autoincrement())
+  articleId Int
+  sortOrder Int         @default(0)
+  title     String
+  content   String      @db.Text
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId, sortOrder])
+}
+
+model BlogImage {
+  id           Int         @id @default(autoincrement())
+  articleId    Int
+  sortOrder    Int         @default(0)
+  imageUrl     String
+  thumbnailUrl String?
+  altText      String?
+  caption      String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  article      BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId, sortOrder])
+}
+
 model PrintAgent {
   id              Int               @id @default(autoincrement())
   code            String            @unique

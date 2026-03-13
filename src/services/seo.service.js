@@ -1,6 +1,6 @@
 const prisma = require("../lib/prisma");
 const { FRONTEND_SITE_URL } = require("../lib/env");
-const { BLOG_SLUGS } = require("../seo/blogSlugs");
+const blogService = require("./blog.service");
 
 const SPECIAL_CITY_PATHS = {
   thionville: "/pizza-napolitaine-thionville",
@@ -126,8 +126,10 @@ async function getSeoLocationCatalog() {
 async function buildSitemapXml() {
   const baseUrl = normalizeBaseUrl(FRONTEND_SITE_URL);
   const staticEntries = STATIC_PATHS.map((path) => ({ path }));
-  const blogEntries = BLOG_SLUGS.map((slug) => ({ path: `/blog/${slug}` }));
-  const dynamicEntries = await getSeoLocationCatalog();
+  const [blogEntries, dynamicEntries] = await Promise.all([
+    blogService.getSeoBlogArticles(),
+    getSeoLocationCatalog(),
+  ]);
 
   const deduped = new Map();
   for (const entry of [...staticEntries, ...blogEntries, ...dynamicEntries]) {
