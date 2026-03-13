@@ -107,7 +107,34 @@ function normalizeParagraphs(source) {
     sortOrder: index,
     title: parseRequiredString(entry?.title, `paragraphs[${index}].title`),
     content: parseRequiredString(entry?.content, `paragraphs[${index}].content`),
+    image: normalizeParagraphImage(entry?.image, index),
   }));
+}
+
+function normalizeParagraphImage(source, index) {
+  if (!source || !source.imageUrl) {
+    return null;
+  }
+
+  const legendSource =
+    (typeof source?.altText === "string" && source.altText.trim()) ||
+    (typeof source?.caption === "string" && source.caption.trim()) ||
+    "";
+  const legend = parseRequiredString(
+    legendSource,
+    `paragraphs[${index}].image.legend`
+  );
+
+  return {
+    sortOrder: index,
+    imageUrl: parseImageUrl(
+      source?.imageUrl,
+      `paragraphs[${index}].image.imageUrl`
+    ),
+    thumbnailUrl: parseOptionalString(source?.thumbnailUrl),
+    altText: legend,
+    caption: legend,
+  };
 }
 
 function normalizeImages(source) {
@@ -128,20 +155,19 @@ function normalizeImages(source) {
       return {
         sortOrder: index,
         imageUrl: parseImageUrl(entry?.imageUrl, `images[${index}].imageUrl`),
-        thumbnailUrl:
-          parseOptionalString(entry?.thumbnailUrl) ||
-          parseImageUrl(entry?.imageUrl, `images[${index}].imageUrl`),
+        thumbnailUrl: parseOptionalString(entry?.thumbnailUrl),
         altText: legend,
         caption: legend,
       };
     });
 }
 
-function formatBlogParagraph(paragraph) {
+function formatBlogParagraph(paragraph, image = null) {
   return {
     id: paragraph.id,
     title: paragraph.title,
     content: paragraph.content,
+    image,
     sortOrder: paragraph.sortOrder,
     createdAt: paragraph.createdAt,
     updatedAt: paragraph.updatedAt,
@@ -161,16 +187,33 @@ function formatBlogImage(image) {
   };
 }
 
-function getSortedCollection(source, formatter) {
+function sortCollection(source) {
   return Array.isArray(source)
-    ? [...source]
-        .sort((left, right) => {
-          const orderDiff = Number(left?.sortOrder || 0) - Number(right?.sortOrder || 0);
-          if (orderDiff !== 0) return orderDiff;
-          return Number(left?.id || 0) - Number(right?.id || 0);
-        })
-        .map(formatter)
+    ? [...source].sort((left, right) => {
+        const orderDiff = Number(left?.sortOrder || 0) - Number(right?.sortOrder || 0);
+        if (orderDiff !== 0) return orderDiff;
+        return Number(left?.id || 0) - Number(right?.id || 0);
+      })
     : [];
+}
+
+function getSortedCollection(source, formatter) {
+  return sortCollection(source).map(formatter);
+}
+
+function mergeParagraphsWithImages(paragraphs, images) {
+  const imageBySortOrder = new Map(
+    sortCollection(images).map((image) => [Number(image?.sortOrder || 0), image])
+  );
+
+  return sortCollection(paragraphs).map((paragraph) => ({
+    ...paragraph,
+    image: imageBySortOrder.get(Number(paragraph?.sortOrder || 0)) || null,
+  }));
+}
+
+function extractImagesFromParagraphs(paragraphs) {
+  return paragraphs.flatMap((paragraph) => (paragraph.image ? [paragraph.image] : []));
 }
 
 function getArticleMetaTitle(article) {
@@ -182,9 +225,15 @@ function getArticleMetaDescription(article) {
 }
 
 function formatBlogArticle(article) {
-  const paragraphs = getSortedCollection(article?.paragraphs, formatBlogParagraph);
   const images = getSortedCollection(article?.images, formatBlogImage);
-  const featuredImage = images[0] || null;
+  const imageBySortOrder = new Map(images.map((image) => [Number(image.sortOrder || 0), image]));
+  const paragraphs = sortCollection(article?.paragraphs).map((paragraph) =>
+    formatBlogParagraph(
+      paragraph,
+      imageBySortOrder.get(Number(paragraph?.sortOrder || 0)) || null
+    )
+  );
+  const featuredImage = paragraphs.find((paragraph) => paragraph.image)?.image || images[0] || null;
 
   return {
     id: article.id,
@@ -308,10 +357,14 @@ async function getAdminBlogArticles() {
 async function createBlogArticle(payload) {
   const title = parseRequiredString(payload?.title, "title");
   const description = parseRequiredString(payload?.description, "description");
-  const slug = normalizeBlogSlug(payload?.slug, title);
-  const paragraphs = normalizeParagraphs(payload?.paragraphs);
-  const images = normalizeImages(payload?.images);
-  const published = parseOptionalBoolean(payload?.published, "published") ?? true;
+  const slug = normalizeBlogSlug(undefined, title);
+  const normalizedParagraphs = normalizeParagraphs(payload?.paragraphs);
+  const paragraphs = normalizedParagraphs.map(({ image, ...paragraph }) => paragraph);
+  const images =
+    payload?.images === undefined
+      ? extractImagesFromParagraphs(normalizedParagraphs)
+      : normalizeImages(payload?.images);
+  const published = parseOptionalBoolean(payload?.published, "published") ?? false;
   const publishedAt = published ? new Date() : null;
 
   try {
@@ -373,17 +426,15 @@ async function updateBlogArticle(id, payload) {
     payload?.description === undefined
       ? existing.description
       : parseRequiredString(payload.description, "description");
-  const slug =
-    payload?.slug === undefined && payload?.title === undefined
-      ? existing.slug
-      : normalizeBlogSlug(payload?.slug, title);
-  const paragraphs =
+  const slug = existing.slug;
+  const normalizedParagraphs =
     payload?.paragraphs === undefined
-      ? normalizeParagraphs(existing.paragraphs)
+      ? normalizeParagraphs(mergeParagraphsWithImages(existing.paragraphs, existing.images))
       : normalizeParagraphs(payload.paragraphs);
+  const paragraphs = normalizedParagraphs.map(({ image, ...paragraph }) => paragraph);
   const images =
     payload?.images === undefined
-      ? normalizeImages(existing.images)
+      ? extractImagesFromParagraphs(normalizedParagraphs)
       : normalizeImages(payload.images);
   const published =
     payload?.published === undefined
