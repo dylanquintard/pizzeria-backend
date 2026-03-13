@@ -115,15 +115,26 @@ function normalizeImages(source) {
 
   return source
     .filter((entry) => entry && entry.imageUrl)
-    .map((entry, index) => ({
-      sortOrder: index,
-      imageUrl: parseImageUrl(entry?.imageUrl, `images[${index}].imageUrl`),
-      thumbnailUrl:
-        parseOptionalString(entry?.thumbnailUrl) ||
-        parseImageUrl(entry?.imageUrl, `images[${index}].imageUrl`),
-      altText: parseOptionalString(entry?.altText),
-      caption: parseOptionalString(entry?.caption),
-    }));
+    .map((entry, index) => {
+      const legendSource =
+        (typeof entry?.altText === "string" && entry.altText.trim()) ||
+        (typeof entry?.caption === "string" && entry.caption.trim()) ||
+        "";
+      const legend = parseRequiredString(
+        legendSource,
+        `images[${index}].legend`
+      );
+
+      return {
+        sortOrder: index,
+        imageUrl: parseImageUrl(entry?.imageUrl, `images[${index}].imageUrl`),
+        thumbnailUrl:
+          parseOptionalString(entry?.thumbnailUrl) ||
+          parseImageUrl(entry?.imageUrl, `images[${index}].imageUrl`),
+        altText: legend,
+        caption: legend,
+      };
+    });
 }
 
 function formatBlogParagraph(paragraph) {
@@ -163,13 +174,11 @@ function getSortedCollection(source, formatter) {
 }
 
 function getArticleMetaTitle(article) {
-  return String(article?.metaTitle || article?.title || "").trim() || null;
+  return String(article?.title || "").trim() || null;
 }
 
 function getArticleMetaDescription(article) {
-  return (
-    String(article?.metaDescription || article?.description || "").trim() || null
-  );
+  return String(article?.description || "").trim() || null;
 }
 
 function formatBlogArticle(article) {
@@ -299,8 +308,6 @@ async function getAdminBlogArticles() {
 async function createBlogArticle(payload) {
   const title = parseRequiredString(payload?.title, "title");
   const description = parseRequiredString(payload?.description, "description");
-  const metaTitle = parseOptionalString(payload?.metaTitle);
-  const metaDescription = parseOptionalString(payload?.metaDescription);
   const slug = normalizeBlogSlug(payload?.slug, title);
   const paragraphs = normalizeParagraphs(payload?.paragraphs);
   const images = normalizeImages(payload?.images);
@@ -313,8 +320,8 @@ async function createBlogArticle(payload) {
         title,
         slug,
         description,
-        metaTitle,
-        metaDescription,
+        metaTitle: null,
+        metaDescription: null,
         published,
         publishedAt,
         paragraphs: {
@@ -366,14 +373,6 @@ async function updateBlogArticle(id, payload) {
     payload?.description === undefined
       ? existing.description
       : parseRequiredString(payload.description, "description");
-  const metaTitle =
-    payload?.metaTitle === undefined
-      ? parseOptionalString(existing.metaTitle)
-      : parseOptionalString(payload.metaTitle);
-  const metaDescription =
-    payload?.metaDescription === undefined
-      ? parseOptionalString(existing.metaDescription)
-      : parseOptionalString(payload.metaDescription);
   const slug =
     payload?.slug === undefined && payload?.title === undefined
       ? existing.slug
@@ -401,8 +400,8 @@ async function updateBlogArticle(id, payload) {
           title,
           slug,
           description,
-          metaTitle,
-          metaDescription,
+          metaTitle: null,
+          metaDescription: null,
           published,
           publishedAt,
         },
