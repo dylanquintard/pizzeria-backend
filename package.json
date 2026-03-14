@@ -6,6 +6,7 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "test": "node --test",
+    "smoke:live": "node scripts/live-api-smoke.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "render-build": "npm run prisma:generate && npm run prisma:migrate:deploy"
