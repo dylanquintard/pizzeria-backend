@@ -8,6 +8,7 @@ const {
   CSRF_HEADER_NAME,
   AUTH_COOKIE_SAMESITE,
   AUTH_COOKIE_SECURE,
+  NODE_ENV,
 } = require("../lib/env");
 
 function setNoStore(res) {
@@ -15,6 +16,9 @@ function setNoStore(res) {
 }
 
 function shouldIncludeAuthToken(req) {
+  if (NODE_ENV === "production") {
+    return false;
+  }
   const queryValue = String(req.query?.includeToken || req.query?.include_token || "").trim().toLowerCase();
   const bodyValue = String(req.body?.includeToken || req.body?.include_token || "").trim().toLowerCase();
   return ["1", "true", "yes", "on"].includes(queryValue) || ["1", "true", "yes", "on"].includes(bodyValue);
@@ -298,4 +302,7 @@ module.exports = {
   getUserById,
   adminUpdateUserRole,
   adminDeleteUser,
+  __testing: {
+    shouldIncludeAuthToken,
+  },
 };

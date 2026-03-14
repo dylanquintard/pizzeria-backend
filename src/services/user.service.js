@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const prisma = require("../lib/prisma");
-const { JWT_SECRET, CORS_ORIGINS } = require("../lib/env");
+const { JWT_SECRET, CORS_ORIGINS, FRONTEND_SITE_URL } = require("../lib/env");
 const { sanitizeUser } = require("../utils/user");
 const { normalizeCustomizations } = require("../utils/customizations");
 const { DELETED_PRODUCT_FALLBACK_NAME } = require("../utils/product");
@@ -83,13 +83,20 @@ function getPasswordResetTtlMinutes() {
   return parsed;
 }
 
-function getPasswordResetBaseUrl() {
-  const explicitBase = String(process.env.PASSWORD_RESET_URL_BASE || "").trim();
+function getPasswordResetBaseUrl(options = {}) {
+  const explicitBase = String(
+    options.passwordResetUrlBase ?? process.env.PASSWORD_RESET_URL_BASE ?? ""
+  ).trim();
   if (explicitBase && /^https?:\/\//i.test(explicitBase)) {
     return explicitBase.replace(/\/+$/, "");
   }
 
-  const fallbackOrigin = String(CORS_ORIGINS?.[0] || "http://localhost:3000").trim();
+  const frontendBase = String(options.frontendSiteUrl ?? FRONTEND_SITE_URL ?? "").trim();
+  if (frontendBase) {
+    return `${frontendBase.replace(/\/+$/, "")}/reset-password`;
+  }
+
+  const fallbackOrigin = String(options.corsOrigins?.[0] ?? CORS_ORIGINS?.[0] ?? "http://localhost:3000").trim();
   return `${fallbackOrigin.replace(/\/+$/, "")}/reset-password`;
 }
 
@@ -1079,4 +1086,7 @@ module.exports = {
   getUserById,
   updateUserRole,
   deleteUser,
+  __testing: {
+    getPasswordResetBaseUrl,
+  },
 };

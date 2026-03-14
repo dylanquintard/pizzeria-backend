@@ -6,6 +6,7 @@ const {
   buildTeamSignature,
   buildTeamSignatureHtml,
   buildUserOrdersUrl,
+  DEFAULT_SITE_NAME,
 } = require("./email-template.service");
 
 let emailTransporter = null;
@@ -61,7 +62,7 @@ async function sendOrderConfirmationEmail(payload = {}) {
 
   const { from, smtpUser } = getMailIdentity();
   const branding = await getEmailBranding();
-  const siteName = String(payload.siteName || branding.siteName || "").trim() || "Pizza Truck";
+  const siteName = String(payload.siteName || branding.siteName || "").trim() || DEFAULT_SITE_NAME;
   const headerLogoUrl = String(payload.headerLogoUrl || branding.headerLogoUrl || "").trim();
   const orderId = payload.orderId ?? "";
   const pickupLocationName = String(payload.pickupLocationName || "Emplacement").trim();
@@ -131,7 +132,7 @@ async function sendOrderValidationEmail(payload = {}) {
 
   const { from, smtpUser } = getMailIdentity();
   const branding = await getEmailBranding();
-  const siteName = String(payload.siteName || branding.siteName || "").trim() || "Pizza Truck";
+  const siteName = String(payload.siteName || branding.siteName || "").trim() || DEFAULT_SITE_NAME;
   const headerLogoUrl = String(payload.headerLogoUrl || branding.headerLogoUrl || "").trim();
   const userOrdersUrl = buildUserOrdersUrl(branding.siteUrl);
   const subject = `${siteName} : Merci pour votre passage !`;

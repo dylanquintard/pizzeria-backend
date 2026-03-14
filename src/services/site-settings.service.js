@@ -4,14 +4,14 @@ const SITE_SETTINGS_SINGLETON_ID = 1;
 const ANNOUNCEMENT_VARIANTS = new Set(["info", "alert", "success"]);
 
 const DEFAULT_SITE_SETTINGS = Object.freeze({
-  siteName: "Pizza Truck",
+  siteName: "Camion Pizza Italienne",
   siteTagline: {
     fr: "Pizza napolitaine au feu de bois en Moselle",
     en: "Wood-fired Neapolitan pizza in Moselle",
   },
   siteDescription: {
-    fr: "Camion pizza artisanal autour de Thionville et Metz, commande en ligne et retrait rapide.",
-    en: "Artisan pizza truck around Thionville and Metz with online ordering and quick pickup.",
+    fr: "Pizza napolitaine au feu de bois en Moselle. Commande en ligne et retrait rapide.",
+    en: "Wood-fired Neapolitan pizza in Moselle. Online ordering and quick pickup.",
   },
   contact: {
     phone: "",
@@ -19,8 +19,8 @@ const DEFAULT_SITE_SETTINGS = Object.freeze({
     address: "",
     mapsUrl: "",
     serviceArea: {
-      fr: "Thionville, Metz et alentours",
-      en: "Thionville, Metz and surrounding areas",
+      fr: "Moselle et alentours",
+      en: "Moselle and surrounding areas",
     },
   },
   social: {
@@ -30,12 +30,12 @@ const DEFAULT_SITE_SETTINGS = Object.freeze({
   },
   seo: {
     defaultMetaTitle: {
-      fr: "Pizza Truck | Pizza napolitaine au feu de bois en Moselle",
-      en: "Pizza Truck | Wood-fired Neapolitan pizza in Moselle",
+      fr: "Camion Pizza Italienne | Pizza napolitaine au feu de bois en Moselle",
+      en: "Italian Pizza Service | Wood-fired Neapolitan pizza in Moselle",
     },
     defaultMetaDescription: {
-      fr: "Pizza napolitaine au feu de bois en Moselle. Camion pizza artisanal autour de Thionville et Metz, commande en ligne et retrait rapide.",
-      en: "Wood-fired Neapolitan pizza in Moselle. Artisan pizza truck around Thionville and Metz with online ordering and quick pickup.",
+      fr: "Pizza napolitaine au feu de bois en Moselle. Commande en ligne et retrait rapide.",
+      en: "Wood-fired Neapolitan pizza in Moselle. Online ordering and quick pickup.",
     },
     defaultOgImageUrl: "",
     headerLogoUrl: "",
@@ -47,8 +47,8 @@ const DEFAULT_SITE_SETTINGS = Object.freeze({
       en: "Wood-fired Neapolitan pizza in Moselle",
     },
     heroSubtitle: {
-      fr: "Une pizza travaillee pour l emporter: pate souple, cuisson vive et recettes nettes a recuperer autour de Thionville et Metz.",
-      en: "Pizza built for pickup: supple dough, lively baking and cleaner recipes around Thionville and Metz.",
+      fr: "Une pizza travaillee pour l emporter: pate souple, cuisson vive et recettes nettes a recuperer en Moselle.",
+      en: "Pizza built for pickup: supple dough, lively baking and cleaner recipes to collect in Moselle.",
     },
     primaryCtaLabel: {
       fr: "Commander",

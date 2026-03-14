@@ -175,7 +175,7 @@ function formatPickupTimeForEmail(dateValue) {
 }
 
 function getSiteNameFromSettingsRecord(record) {
-  return String(record?.siteName || "").trim() || "Pizza Truck";
+  return String(record?.siteName || "").trim() || "Camion Pizza Italienne";
 }
 
 function getHeaderLogoUrlFromSettingsRecord(record) {

@@ -2,6 +2,7 @@ const prisma = require("../lib/prisma");
 const { FRONTEND_SITE_URL } = require("../lib/env");
 
 const SITE_SETTINGS_SINGLETON_ID = 1;
+const DEFAULT_SITE_NAME = "Camion Pizza Italienne";
 
 function escapeHtml(value) {
   return String(value || "")
@@ -24,7 +25,7 @@ async function getEmailBranding() {
     .catch(() => null);
 
   return {
-    siteName: String(siteSettings?.siteName || "").trim() || "Pizza Truck",
+    siteName: String(siteSettings?.siteName || "").trim() || DEFAULT_SITE_NAME,
     headerLogoUrl: String(siteSettings?.seo?.headerLogoUrl || "").trim(),
     siteUrl: String(FRONTEND_SITE_URL || "").trim() || "https://eazytoolz.site",
   };
@@ -89,4 +90,5 @@ module.exports = {
   buildTeamSignature,
   buildTeamSignatureHtml,
   buildUserOrdersUrl,
+  DEFAULT_SITE_NAME,
 };
