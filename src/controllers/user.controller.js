@@ -207,7 +207,7 @@ async function upsertOrderReview(req, res) {
     const status =
       message === "Order not found"
         ? 404
-        : message === "Only finalized orders can be reviewed"
+        : message === "Only validated orders can be reviewed"
           ? 400
           : 400;
     res.status(status).json({ error: message });

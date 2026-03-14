@@ -252,6 +252,17 @@ async function updateOrderStatusAdmin(req, res) {
       });
     }
 
+    if (normalizedStatus === "VALIDATE") {
+      try {
+        const emailData = await orderService.getOrderValidationEmailData(orderId);
+        if (emailData?.toEmail) {
+          await orderEmailService.sendOrderValidationEmail(emailData);
+        }
+      } catch (mailErr) {
+        console.error("updateOrderStatusAdmin validation email error:", mailErr);
+      }
+    }
+
     res.json(updatedOrder);
   } catch (err) {
     console.error("updateOrderStatusAdmin error:", err);

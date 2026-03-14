@@ -106,6 +106,7 @@ function applyAdminStatusFilter(where, status) {
     appendAndClause(where, {
       OR: [
         { status: OrderStatus.FINALIZED },
+        { status: OrderStatus.VALIDATE },
         {
           printJobs: {
             some: {
@@ -125,6 +126,10 @@ function applyAdminStatusFilter(where, status) {
 function deriveOrderWorkflowStatus(order, primaryPrintJob) {
   if (order?.status === OrderStatus.CANCELED) {
     return "CANCELED";
+  }
+
+  if (order?.status === OrderStatus.VALIDATE) {
+    return "VALIDATED";
   }
 
   if (
@@ -167,6 +172,14 @@ function formatPickupTimeForEmail(dateValue) {
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
   return `${hours}h${minutes}`;
+}
+
+function getSiteNameFromSettingsRecord(record) {
+  return String(record?.siteName || "").trim() || "Pizza Truck";
+}
+
+function getHeaderLogoUrlFromSettingsRecord(record) {
+  return String(record?.seo?.headerLogoUrl || "").trim() || "";
 }
 
 async function recalculateTotal(client, orderId) {
@@ -708,6 +721,39 @@ async function getOrderConfirmationEmailData(orderId) {
   };
 }
 
+async function getOrderValidationEmailData(orderId) {
+  const parsedOrderId = parsePositiveInt(orderId, "orderId");
+
+  const [order, siteSettings] = await Promise.all([
+    prisma.order.findUnique({
+      where: { id: parsedOrderId },
+      include: {
+        user: { select: { email: true, name: true, firstName: true, lastName: true } },
+      },
+    }),
+    prisma.siteSetting.findUnique({
+      where: { id: 1 },
+      select: {
+        siteName: true,
+        seo: true,
+      },
+    }),
+  ]);
+
+  if (!order) return null;
+
+  return {
+    orderId: order.id,
+    toEmail: order.user?.email || null,
+    customerName:
+      order.user?.firstName ||
+      order.user?.name ||
+      "client",
+    siteName: getSiteNameFromSettingsRecord(siteSettings),
+    headerLogoUrl: getHeaderLogoUrlFromSettingsRecord(siteSettings),
+  };
+}
+
 module.exports = {
   getCartByUserId,
   addToCart,
@@ -718,4 +764,5 @@ module.exports = {
   updateOrderStatusAdmin,
   deleteOrder,
   getOrderConfirmationEmailData,
+  getOrderValidationEmailData,
 };

@@ -38,6 +38,7 @@ const DEFAULT_SITE_SETTINGS = Object.freeze({
       en: "Wood-fired Neapolitan pizza in Moselle. Artisan pizza truck around Thionville and Metz with online ordering and quick pickup.",
     },
     defaultOgImageUrl: "",
+    headerLogoUrl: "",
     canonicalSiteUrl: "",
   },
   home: {
@@ -238,6 +239,9 @@ function formatSiteSettingsRecord(record) {
       defaultOgImageUrl:
         normalizeString(source.seo?.defaultOgImageUrl, "seo.defaultOgImageUrl") ??
         defaults.seo.defaultOgImageUrl,
+      headerLogoUrl:
+        normalizeString(source.seo?.headerLogoUrl, "seo.headerLogoUrl") ??
+        defaults.seo.headerLogoUrl,
       canonicalSiteUrl:
         normalizeString(source.seo?.canonicalSiteUrl, "seo.canonicalSiteUrl") ??
         defaults.seo.canonicalSiteUrl,
@@ -534,16 +538,23 @@ async function updateSiteSettings(payload) {
                     "seo.defaultMetaDescription"
                   )
                 : current.seo.defaultMetaDescription,
-            defaultOgImageUrl:
-              ensureObject(source.seo, "seo").defaultOgImageUrl !== undefined
-                ? normalizeString(
-                    ensureObject(source.seo, "seo").defaultOgImageUrl,
-                    "seo.defaultOgImageUrl"
-                  )
-                : current.seo.defaultOgImageUrl,
-            canonicalSiteUrl:
-              ensureObject(source.seo, "seo").canonicalSiteUrl !== undefined
-                ? normalizeString(
+              defaultOgImageUrl:
+                ensureObject(source.seo, "seo").defaultOgImageUrl !== undefined
+                  ? normalizeString(
+                      ensureObject(source.seo, "seo").defaultOgImageUrl,
+                      "seo.defaultOgImageUrl"
+                    )
+                  : current.seo.defaultOgImageUrl,
+              headerLogoUrl:
+                ensureObject(source.seo, "seo").headerLogoUrl !== undefined
+                  ? normalizeString(
+                      ensureObject(source.seo, "seo").headerLogoUrl,
+                      "seo.headerLogoUrl"
+                    )
+                  : current.seo.headerLogoUrl,
+              canonicalSiteUrl:
+                ensureObject(source.seo, "seo").canonicalSiteUrl !== undefined
+                  ? normalizeString(
                     ensureObject(source.seo, "seo").canonicalSiteUrl,
                     "seo.canonicalSiteUrl"
                   )

@@ -90,8 +90,8 @@ async function upsertOrderReview(userId, orderId, payload = {}) {
     throw new Error("Order not found");
   }
 
-  if (String(order.status || "").toUpperCase() !== "FINALIZED") {
-    throw new Error("Only finalized orders can be reviewed");
+  if (String(order.status || "").toUpperCase() !== "VALIDATE") {
+    throw new Error("Only validated orders can be reviewed");
   }
 
   if (order.review) {
@@ -127,7 +127,9 @@ async function getPublicReviews(options = {}) {
   const reviews = await prisma.orderReview.findMany({
     where: {
       order: {
-        status: "FINALIZED",
+        status: {
+          in: ["VALIDATE", "FINALIZED"],
+        },
       },
     },
     include: {
@@ -159,7 +161,9 @@ async function getPublicReviews(options = {}) {
   const aggregate = await prisma.orderReview.aggregate({
     where: {
       order: {
-        status: "FINALIZED",
+        status: {
+          in: ["VALIDATE", "FINALIZED"],
+        },
       },
     },
     _avg: {

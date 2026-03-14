@@ -394,6 +394,7 @@ enum OrderStatus {
   PENDING
   FINALIZED
   COMPLETED
+  VALIDATE
   CANCELED
 }
 

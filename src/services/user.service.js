@@ -8,6 +8,13 @@ const { JWT_SECRET, CORS_ORIGINS } = require("../lib/env");
 const { sanitizeUser } = require("../utils/user");
 const { normalizeCustomizations } = require("../utils/customizations");
 const { DELETED_PRODUCT_FALLBACK_NAME } = require("../utils/product");
+const {
+  escapeHtml,
+  getEmailBranding,
+  buildEmailLayout,
+  buildTeamSignature,
+  buildTeamSignatureHtml,
+} = require("./email-template.service");
 
 const SALT_ROUNDS = 10;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -132,15 +139,6 @@ function getEmailTransporter() {
   return emailTransporter;
 }
 
-function escapeHtml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
 function generateSixDigitCode() {
   return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
 }
@@ -195,22 +193,46 @@ async function sendVerificationEmail({ email, name, code }) {
   const from = process.env.SMTP_FROM?.trim() || getRequiredMailEnv("SMTP_USER");
   const smtpUser = getRequiredMailEnv("SMTP_USER");
   const ttlMinutes = getEmailOtpTtlMinutes();
-  const subject = "Code de verification de votre email";
+  const branding = await getEmailBranding();
+  const siteName = branding.siteName;
+  const subject = `${siteName} : Code de verification e-mail`;
 
   const textBody = [
-    `Bonjour ${name},`,
+    "Bonjour,",
     "",
-    "Merci pour votre inscription.",
-    `Votre code de verification est : ${code}`,
-    `Ce code expire dans ${ttlMinutes} minutes.`,
+    "Afin de confirmer votre adresse e-mail, veuillez saisir le code de verification ci-dessous :",
+    "",
+    code,
+    "",
+    `Ce code est valable pendant ${ttlMinutes} minutes.`,
+    "",
+    "Si vous n'etes pas a l'origine de cette demande, vous pouvez ignorer cet e-mail.",
+    "",
+    buildTeamSignature(siteName),
   ].join("\n");
 
-  const htmlBody = `
-    <p>Bonjour ${escapeHtml(name)},</p>
-    <p>Merci pour votre inscription.</p>
-    <p><strong>Votre code de verification :</strong> ${escapeHtml(code)}</p>
-    <p>Ce code expire dans ${ttlMinutes} minutes.</p>
-  `;
+  const htmlBody = buildEmailLayout({
+    siteName,
+    headerLogoUrl: branding.headerLogoUrl,
+    contentHtml: `
+      <p style="margin:0 0 20px;">Bonjour,</p>
+      <p style="margin:0 0 20px;">
+        Afin de confirmer votre adresse e-mail, veuillez saisir le code de verification ci-dessous :
+      </p>
+      <div style="margin:0 0 24px; text-align:center;">
+        <div style="display:inline-block; min-width:180px; padding:18px 24px; border-radius:18px; border:1px solid #eadfcb; background:#fbf8f2; font-size:32px; font-weight:700; letter-spacing:0.18em; color:#111827;">
+          ${escapeHtml(code)}
+        </div>
+      </div>
+      <p style="margin:0 0 18px;">
+        Ce code est valable pendant ${escapeHtml(ttlMinutes)} minutes.
+      </p>
+      <p style="margin:0 0 18px;">
+        Si vous n'etes pas a l'origine de cette demande, vous pouvez ignorer cet e-mail.
+      </p>
+      ${buildTeamSignatureHtml(siteName)}
+    `,
+  });
 
   try {
     const info = await getEmailTransporter().sendMail({
@@ -252,29 +274,56 @@ async function sendVerificationEmail({ email, name, code }) {
 async function sendPasswordResetEmail({ email, name, resetLink, expiresInMinutes }) {
   const from = process.env.SMTP_FROM?.trim() || getRequiredMailEnv("SMTP_USER");
   const smtpUser = getRequiredMailEnv("SMTP_USER");
-  const subject = "Reinitialisation de votre mot de passe";
+  const branding = await getEmailBranding();
+  const siteName = branding.siteName;
+  const subject = `${siteName} : Reinitialisation de votre mot de passe`;
 
   const textBody = [
-    `Bonjour ${name},`,
+    "Bonjour,",
     "",
     "Vous avez demande la reinitialisation de votre mot de passe.",
-    `Utilisez ce lien pour definir un nouveau mot de passe: ${resetLink}`,
-    `Ce lien expire dans ${expiresInMinutes} minutes.`,
     "",
-    "Si vous n'etes pas a l'origine de cette demande, ignorez cet email.",
+    "Pour definir un nouveau mot de passe, veuillez cliquer sur le lien ci-dessous :",
+    "",
+    resetLink,
+    "",
+    `Ce lien est valable pendant ${expiresInMinutes} minutes.`,
+    "",
+    "Si vous n'etes pas a l'origine de cette demande, vous pouvez ignorer cet e-mail.",
+    "",
+    buildTeamSignature(siteName),
   ].join("\n");
 
-  const htmlBody = `
-    <p>Bonjour ${escapeHtml(name)},</p>
-    <p>Vous avez demande la reinitialisation de votre mot de passe.</p>
-    <p>
-      <a href="${escapeHtml(resetLink)}" target="_blank" rel="noopener noreferrer">
-        Definir un nouveau mot de passe
-      </a>
-    </p>
-    <p>Ce lien expire dans ${escapeHtml(expiresInMinutes)} minutes.</p>
-    <p>Si vous n'etes pas a l'origine de cette demande, ignorez cet email.</p>
-  `;
+  const htmlBody = buildEmailLayout({
+    siteName,
+    headerLogoUrl: branding.headerLogoUrl,
+    contentHtml: `
+      <p style="margin:0 0 20px;">Bonjour,</p>
+      <p style="margin:0 0 20px;">
+        Vous avez demande la reinitialisation de votre mot de passe.
+      </p>
+      <p style="margin:0 0 16px;">
+        Pour definir un nouveau mot de passe, veuillez cliquer sur le lien ci-dessous :
+      </p>
+      <div style="text-align:center; margin:0 0 24px;">
+        <a
+          href="${escapeHtml(resetLink)}"
+          target="_blank"
+          rel="noopener noreferrer"
+          style="display:inline-block; padding:14px 24px; border-radius:999px; background:#f5c542; color:#111827; text-decoration:none; font-weight:700;"
+        >
+          Definir un nouveau mot de passe
+        </a>
+      </div>
+      <p style="margin:0 0 18px;">
+        Ce lien est valable pendant ${escapeHtml(expiresInMinutes)} minutes.
+      </p>
+      <p style="margin:0 0 18px;">
+        Si vous n'etes pas a l'origine de cette demande, vous pouvez ignorer cet e-mail.
+      </p>
+      ${buildTeamSignatureHtml(siteName)}
+    `,
+  });
 
   try {
     const info = await getEmailTransporter().sendMail({
@@ -524,7 +573,7 @@ function formatOrderForFrontend(order, ingredientMap) {
     totalPrice: Number(order.total),
     customerNote: order.customerNote || null,
     note: order.customerNote || null,
-    canReview: String(order.status || "").toUpperCase() === "FINALIZED",
+    canReview: String(order.status || "").toUpperCase() === "VALIDATE",
     review: order.review
       ? {
           id: order.review.id,
