@@ -4,9 +4,9 @@ const blogService = require("./blog.service");
 
 const SPECIAL_CITY_PATHS = {
   thionville: "/pizza-napolitaine-thionville",
-  metz: "/pizza-napolitaine-metz",
   moselle: "/food-truck-pizza-moselle",
 };
+const BLOCKED_CITY_SLUGS = new Set(["metz"]);
 
 const STATIC_PATHS = [
   "/",
@@ -16,7 +16,6 @@ const STATIC_PATHS = [
   "/contact",
   "/blog",
   "/pizza-napolitaine-thionville",
-  "/pizza-napolitaine-metz",
   "/food-truck-pizza-moselle",
 ];
 
@@ -36,6 +35,7 @@ function slugify(value) {
 function buildCityPath(cityName) {
   const slug = slugify(cityName);
   if (!slug) return "";
+  if (BLOCKED_CITY_SLUGS.has(slug)) return "";
   return SPECIAL_CITY_PATHS[slug] || `/pizza-${slug}`;
 }
 

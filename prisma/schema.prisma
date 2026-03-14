@@ -24,6 +24,7 @@ model User {
   passwordResetExpiresAt DateTime?
   role          Role      @default(CLIENT)
   orders        Order[]
+  reviews       OrderReview[]
 }
 
 model Category {
@@ -133,11 +134,27 @@ model Order {
   status       OrderStatus @default(PENDING)
   createdAt    DateTime    @default(now())
   printJobs    PrintJob[]
+  review       OrderReview?
 
   @@index([userId])
   @@index([userId, status, createdAt])
   @@index([status, createdAt])
   @@index([timeSlotId, status])
+}
+
+model OrderReview {
+  id        Int      @id @default(autoincrement())
+  orderId    Int     @unique
+  userId     Int
+  rating     Int
+  comment    String  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
 }
 
 model OrderItem {

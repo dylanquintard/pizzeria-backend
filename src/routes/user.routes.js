@@ -62,6 +62,7 @@ router.get("/me", authMiddleware, userController.me);
 router.get("/csrf-token", authMiddleware, userController.csrfToken);
 router.put("/me", authMiddleware, userController.updateMe);
 router.get("/orders", authMiddleware, userController.getUserOrders);
+router.put("/orders/:orderId/review", authMiddleware, userController.upsertOrderReview);
 
 router.get("/", authMiddleware, adminMiddleware, userController.getAllUsers);
 router.get("/:id", authMiddleware, adminMiddleware, userController.getUserById);

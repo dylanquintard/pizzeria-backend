@@ -1,4 +1,5 @@
 const userService = require("../services/user.service");
+const reviewService = require("../services/review.service");
 const crypto = require("crypto");
 const {
   AUTH_COOKIE_NAME,
@@ -194,6 +195,25 @@ async function getUserOrders(req, res) {
   }
 }
 
+async function upsertOrderReview(req, res) {
+  try {
+    setNoStore(res);
+    const userId = req.user.userId;
+    const { orderId } = req.params;
+    const review = await reviewService.upsertOrderReview(userId, orderId, req.body || {});
+    res.status(200).json(review);
+  } catch (err) {
+    const message = err?.message || "Unable to save review";
+    const status =
+      message === "Order not found"
+        ? 404
+        : message === "Only finalized orders can be reviewed"
+          ? 400
+          : 400;
+    res.status(status).json({ error: message });
+  }
+}
+
 async function me(req, res) {
   try {
     setNoStore(res);
@@ -270,6 +290,7 @@ module.exports = {
   login,
   logout,
   getUserOrders,
+  upsertOrderReview,
   me,
   csrfToken,
   updateMe,

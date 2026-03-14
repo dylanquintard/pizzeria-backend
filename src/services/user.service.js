@@ -524,6 +524,16 @@ function formatOrderForFrontend(order, ingredientMap) {
     totalPrice: Number(order.total),
     customerNote: order.customerNote || null,
     note: order.customerNote || null,
+    canReview: String(order.status || "").toUpperCase() === "FINALIZED",
+    review: order.review
+      ? {
+          id: order.review.id,
+          rating: order.review.rating,
+          comment: order.review.comment,
+          createdAt: order.review.createdAt,
+          updatedAt: order.review.updatedAt,
+        }
+      : null,
     timeSlot: order.timeSlot || null,
     createdAt: order.createdAt,
     items,
@@ -757,6 +767,7 @@ async function getOrdersByUserId(userId) {
     include: {
       items: { include: { product: { include: { category: true } } } },
       timeSlot: { include: { location: true } },
+      review: true,
     },
   });
 
