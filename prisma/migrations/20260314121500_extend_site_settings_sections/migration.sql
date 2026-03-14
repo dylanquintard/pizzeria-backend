@@ -1,0 +1,5 @@
+ALTER TABLE "SiteSetting"
+ADD COLUMN "blog" JSONB,
+ADD COLUMN "contactPage" JSONB,
+ADD COLUMN "order" JSONB,
+ADD COLUMN "footer" JSONB;

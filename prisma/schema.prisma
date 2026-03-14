@@ -242,9 +242,27 @@ model SiteSetting {
   social          Json?
   seo             Json?
   home            Json?
+  blog            Json?
+  contactPage     Json?
+  order           Json?
+  footer          Json?
   announcement    Json?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model PageFaq {
+  id         Int      @id @default(autoincrement())
+  targetPath String
+  question   String
+  answer     String   @db.Text
+  sortOrder  Int      @default(0)
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([targetPath, active, sortOrder])
+  @@index([targetPath, sortOrder])
 }
 
 model PrintAgent {
