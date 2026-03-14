@@ -1,7 +1,7 @@
 -- CreateTable
 CREATE TABLE "SiteSetting" (
     "id" INTEGER NOT NULL DEFAULT 1,
-    "siteName" TEXT NOT NULL DEFAULT 'Pizza Truck',
+    "siteName" TEXT NOT NULL DEFAULT 'Camion Pizza Italienne',
     "siteTagline" JSONB,
     "siteDescription" JSONB,
     "contact" JSONB,

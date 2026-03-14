@@ -1054,6 +1054,18 @@ async function markPrintJobSuccess(agent, jobId, payload = {}) {
     });
 
     if (orderFinalize.count === 1) {
+      await tx.orderActivity.create({
+        data: {
+          orderId: job.orderId,
+          action: "ORDER_FINALIZED",
+          metadata: {
+            fromStatus: OrderStatus.COMPLETED,
+            toStatus: OrderStatus.FINALIZED,
+            source: "print-service",
+          },
+        },
+      });
+
       orderStatusUpdated = await tx.order.findUnique({
         where: { id: job.orderId },
         select: {

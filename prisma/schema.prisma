@@ -25,6 +25,8 @@ model User {
   role          Role      @default(CLIENT)
   orders        Order[]
   reviews       OrderReview[]
+  orderActivities OrderActivity[] @relation("OrderActivityActor")
+  webPushSubscriptions WebPushSubscription[]
 }
 
 model Category {
@@ -135,11 +137,27 @@ model Order {
   createdAt    DateTime    @default(now())
   printJobs    PrintJob[]
   review       OrderReview?
+  activities   OrderActivity[]
 
   @@index([userId])
   @@index([userId, status, createdAt])
   @@index([status, createdAt])
   @@index([timeSlotId, status])
+}
+
+model OrderActivity {
+  id          Int       @id @default(autoincrement())
+  orderId      Int
+  actorUserId  Int?
+  action      String
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  actor       User?     @relation("OrderActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
 }
 
 model OrderReview {
@@ -235,7 +253,7 @@ model BlogImage {
 
 model SiteSetting {
   id              Int      @id @default(1)
-  siteName        String   @default("Pizza Truck")
+  siteName        String   @default("Camion Pizza Italienne")
   siteTagline     Json?
   siteDescription Json?
   contact         Json?
@@ -263,6 +281,23 @@ model PageFaq {
 
   @@index([targetPath, active, sortOrder])
   @@index([targetPath, sortOrder])
+}
+
+model WebPushSubscription {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  endpoint       String   @unique
+  p256dh         String
+  auth           String
+  userAgent      String?
+  active         Boolean  @default(true)
+  lastNotifiedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, active])
+  @@index([active, updatedAt])
 }
 
 model PrintAgent {

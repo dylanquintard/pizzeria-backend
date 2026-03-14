@@ -1,0 +1,27 @@
+-- CreateTable
+CREATE TABLE "WebPushSubscription" (
+    "id" SERIAL NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "endpoint" TEXT NOT NULL,
+    "p256dh" TEXT NOT NULL,
+    "auth" TEXT NOT NULL,
+    "userAgent" TEXT,
+    "active" BOOLEAN NOT NULL DEFAULT true,
+    "lastNotifiedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "WebPushSubscription_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "WebPushSubscription_endpoint_key" ON "WebPushSubscription"("endpoint");
+
+-- CreateIndex
+CREATE INDEX "WebPushSubscription_userId_active_idx" ON "WebPushSubscription"("userId", "active");
+
+-- CreateIndex
+CREATE INDEX "WebPushSubscription_active_updatedAt_idx" ON "WebPushSubscription"("active", "updatedAt");
+
+-- AddForeignKey
+ALTER TABLE "WebPushSubscription" ADD CONSTRAINT "WebPushSubscription_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

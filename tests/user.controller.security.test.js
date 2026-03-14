@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const userService = require("../src/services/user.service");
 
 function loadUserControllerForNodeEnv(nodeEnv) {
   const controllerPath = require.resolve("../src/controllers/user.controller");
@@ -43,4 +44,50 @@ test("includeToken is always disabled in production", () => {
   });
 
   assert.equal(result, false);
+});
+
+test("me refreshes the authenticated session cookies", async () => {
+  const controller = loadUserControllerForNodeEnv("production");
+  const originalGetMe = userService.getMe;
+  const originalIssueSessionToken = userService.issueSessionToken;
+
+  let authCookie = null;
+  let csrfCookie = null;
+
+  userService.getMe = async () => ({
+    id: 4,
+    role: "ADMIN",
+    email: "admin@site.test",
+  });
+  userService.issueSessionToken = () => "renewed-token";
+
+  try {
+    const res = {
+      headers: {},
+      payload: null,
+      cookie(name, value) {
+        if (String(name).includes("auth")) authCookie = value;
+        if (String(name).includes("csrf")) csrfCookie = value;
+      },
+      setHeader(name, value) {
+        this.headers[name] = value;
+      },
+      json(value) {
+        this.payload = value;
+        return this;
+      },
+      status() {
+        return this;
+      },
+    };
+
+    await controller.me({ user: { userId: 4 } }, res);
+
+    assert.equal(authCookie, "renewed-token");
+    assert.ok(typeof csrfCookie === "string" && csrfCookie.length > 0);
+    assert.equal(res.payload?.id, 4);
+  } finally {
+    userService.getMe = originalGetMe;
+    userService.issueSessionToken = originalIssueSessionToken;
+  }
 });

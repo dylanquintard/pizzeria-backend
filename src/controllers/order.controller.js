@@ -1,5 +1,6 @@
 const orderService = require("../services/order.service");
 const orderEmailService = require("../services/order-email.service");
+const webPushService = require("../services/web-push.service");
 const { emitRealtimeEvent } = require("../lib/realtime");
 
 function getUserId(req) {
@@ -124,6 +125,12 @@ async function finalizeOrder(req, res) {
       console.error("finalizeOrder email error:", mailErr);
     }
 
+    try {
+      await webPushService.sendNewOrderPushToAdmins(order);
+    } catch (pushErr) {
+      console.error("finalizeOrder push error:", pushErr);
+    }
+
     res.json(order);
   } catch (err) {
     console.error("finalizeOrder error:", err);
@@ -214,13 +221,17 @@ async function updateOrderStatusAdmin(req, res) {
 
     const normalizedStatus = String(status || "").trim().toUpperCase();
 
-    if (normalizedStatus === "FINALIZED" || normalizedStatus === "PRINTED") {
+    if (normalizedStatus === "PRINTED") {
       return res.status(400).json({
-        error: "Manual finalize is disabled. Order becomes PRINTED automatically after ticket printing.",
+        error: "PRINTED is a derived workflow status and cannot be applied manually.",
       });
     }
 
-    const updatedOrder = await orderService.updateOrderStatusAdmin(orderId, status);
+    const updatedOrder = await orderService.updateOrderStatusAdmin(
+      orderId,
+      status,
+      getUserId(req)
+    );
 
     emitRealtimeEvent(
       "orders:admin-updated",

@@ -22,6 +22,20 @@ const ORDER_INCLUDE = {
       email: true,
     },
   },
+  activities: {
+    include: {
+      actor: {
+        select: {
+          id: true,
+          name: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  },
 };
 
 const ADMIN_ORDER_INCLUDE = {
@@ -182,6 +196,48 @@ function getHeaderLogoUrlFromSettingsRecord(record) {
   return String(record?.seo?.headerLogoUrl || "").trim() || "";
 }
 
+function getActivityLabel(action) {
+  switch (String(action || "").toUpperCase()) {
+    case "ORDER_RECEIVED":
+      return "Commande recue";
+    case "ORDER_FINALIZED":
+      return "Commande terminee";
+    case "ORDER_VALIDATED":
+      return "Commande validee";
+    case "ORDER_CANCELED":
+      return "Commande annulee";
+    default:
+      return "Action commande";
+  }
+}
+
+function getActivityActorLabel(activity, orderUserId) {
+  if (!activity?.actor) return null;
+  if (activity.actor.id === orderUserId) {
+    return "Client";
+  }
+
+  return (
+    activity.actor.firstName ||
+    activity.actor.name ||
+    activity.actor.email ||
+    `Utilisateur #${activity.actor.id}`
+  );
+}
+
+async function createOrderActivity(tx, { orderId, actorUserId = null, action, metadata = null }) {
+  if (!orderId || !action) return null;
+
+  return tx.orderActivity.create({
+    data: {
+      orderId,
+      actorUserId,
+      action,
+      metadata: metadata || undefined,
+    },
+  });
+}
+
 async function recalculateTotal(client, orderId) {
   const items = await client.orderItem.findMany({
     where: { orderId },
@@ -305,6 +361,24 @@ function formatOrderWithIngredientMap(order, ingredientMap) {
           email: order.user.email ?? null,
         }
       : null,
+    activities: Array.isArray(order.activities)
+      ? order.activities.map((activity) => ({
+          id: activity.id,
+          action: activity.action,
+          label: getActivityLabel(activity.action),
+          createdAt: activity.createdAt,
+          actorLabel: getActivityActorLabel(activity, order.user?.id),
+          actor: activity.actor
+            ? {
+                id: activity.actor.id,
+                name: activity.actor.name ?? null,
+                firstName: activity.actor.firstName ?? null,
+                lastName: activity.actor.lastName ?? null,
+                email: activity.actor.email ?? null,
+              }
+            : null,
+        }))
+      : [],
     items,
   };
 }
@@ -557,6 +631,16 @@ async function finalizeOrder(userId, pickupSelection = {}) {
       },
     });
 
+    await createOrderActivity(tx, {
+      orderId: cart.id,
+      actorUserId: parsedUserId,
+      action: "ORDER_RECEIVED",
+      metadata: {
+        status: OrderStatus.COMPLETED,
+        timeSlotId: concreteSlot.id,
+      },
+    });
+
     try {
       await printService.enqueueOrderTicketForOrderId(tx, cart.id);
     } catch (printErr) {
@@ -644,9 +728,13 @@ async function deleteOrder(orderId) {
   return true;
 }
 
-async function updateOrderStatusAdmin(orderId, status) {
+async function updateOrderStatusAdmin(orderId, status, actorUserId = null) {
   const parsedOrderId = parsePositiveInt(orderId, "orderId");
   const nextStatus = parseStatus(status);
+  const parsedActorUserId =
+    actorUserId === undefined || actorUserId === null
+      ? null
+      : parsePositiveInt(actorUserId, "actorUserId");
 
   const updatedOrder = await prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({
@@ -686,6 +774,27 @@ async function updateOrderStatusAdmin(orderId, status) {
       where: { id: parsedOrderId },
       data: { status: nextStatus },
     });
+
+    const activityAction =
+      nextStatus === OrderStatus.FINALIZED
+        ? "ORDER_FINALIZED"
+        : nextStatus === OrderStatus.VALIDATE
+          ? "ORDER_VALIDATED"
+          : nextStatus === OrderStatus.CANCELED
+            ? "ORDER_CANCELED"
+            : null;
+
+    if (activityAction) {
+      await createOrderActivity(tx, {
+        orderId: parsedOrderId,
+        actorUserId: parsedActorUserId,
+        action: activityAction,
+        metadata: {
+          fromStatus: order.status,
+          toStatus: nextStatus,
+        },
+      });
+    }
 
     return tx.order.findUnique({ where: { id: parsedOrderId }, include: ORDER_INCLUDE });
   });

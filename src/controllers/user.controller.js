@@ -34,6 +34,13 @@ function setAuthCookie(res, token) {
   });
 }
 
+function issueAuthenticatedSession(res, user) {
+  const token = userService.issueSessionToken(user);
+  setAuthCookie(res, token);
+  issueCsrfToken(res);
+  return token;
+}
+
 function createCsrfToken() {
   return crypto.randomBytes(32).toString("hex");
 }
@@ -221,9 +228,9 @@ async function upsertOrderReview(req, res) {
 async function me(req, res) {
   try {
     setNoStore(res);
-    issueCsrfToken(res);
     const user = await userService.getMe(req.user.userId);
     if (!user) return res.status(404).json({ error: "User not found" });
+    issueAuthenticatedSession(res, user);
     res.json(user);
   } catch (err) {
     res.status(500).json({ error: err.message });

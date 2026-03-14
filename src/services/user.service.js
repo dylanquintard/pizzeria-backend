@@ -43,6 +43,10 @@ function generateToken(user) {
   });
 }
 
+function issueSessionToken(user) {
+  return generateToken(user);
+}
+
 function normalizeEmail(email) {
   if (typeof email !== "string") throw new Error("email is required");
   const value = email.trim().toLowerCase();
@@ -1073,6 +1077,7 @@ async function deleteUser(userId) {
 }
 
 module.exports = {
+  issueSessionToken,
   createUser,
   verifyEmailCode,
   resendEmailVerificationCode,
