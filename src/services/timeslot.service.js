@@ -406,6 +406,48 @@ function buildConcreteReservationMap(slots = []) {
   return reservedByKey;
 }
 
+function buildConcreteSlotStateMap(slots = []) {
+  const slotsByKey = new Map();
+
+  for (const slot of slots) {
+    if (!slot.locationId) continue;
+
+    const key = `${slot.locationId}:${formatTimeValue(slot.startTime)}`;
+    if (!slotsByKey.has(key)) {
+      slotsByKey.set(key, []);
+    }
+
+    slotsByKey.get(key).push(slot);
+  }
+
+  const stateByKey = new Map();
+
+  for (const [key, groupedSlots] of slotsByKey.entries()) {
+    const orderedSlots = [...groupedSlots].sort(
+      (left, right) => Number(left.id || 0) - Number(right.id || 0)
+    );
+    const primarySlot = orderedSlots[0];
+    const totalReserved = orderedSlots.reduce(
+      (sum, slot) => sum + Number(slot.currentPizzas || 0),
+      0
+    );
+    const hasInactiveSlot = orderedSlots.some((slot) => slot.active === false);
+
+    stateByKey.set(key, {
+      slotId: primarySlot?.id || null,
+      active: hasInactiveSlot ? false : Boolean(primarySlot?.active),
+      currentPizzas: totalReserved,
+      maxPizzas: Number(primarySlot?.maxPizzas || 0),
+      startTime: primarySlot?.startTime || null,
+      endTime: primarySlot?.endTime || null,
+      locationId: primarySlot?.locationId || null,
+      agentId: primarySlot?.agentId || null,
+    });
+  }
+
+  return stateByKey;
+}
+
 async function getClosedAgentIdsForDate(dbClient, serviceDate, candidateAgentIds = []) {
   const normalizedDate = parseIsoDate(serviceDate, "serviceDate");
   const agentIds = [...new Set(candidateAgentIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
@@ -478,7 +520,7 @@ async function getPickupAvailability(params = {}) {
     templateSlots.map((slot) => slot.agentId)
   );
 
-  const reservedByKey = buildConcreteReservationMap(concreteSlots);
+  const concreteStateByKey = buildConcreteSlotStateMap(concreteSlots);
   const minStartTime = new Date(Date.now() + 30 * 60_000);
 
   const slots = templateSlots
@@ -496,8 +538,14 @@ async function getPickupAvailability(params = {}) {
       );
       const concreteEnd = new Date(concreteStart.getTime() + slotDuration * 60_000);
       const key = `${templateSlot.locationId}:${pickupTime}`;
-      const currentPizzas = Number(reservedByKey.get(key) || 0);
-      const maxPizzas = Number(templateSlot.maxPizzas || 0);
+      const concreteState = concreteStateByKey.get(key);
+
+      if (concreteState && concreteState.active === false) {
+        return null;
+      }
+
+      const currentPizzas = Number(concreteState?.currentPizzas || 0);
+      const maxPizzas = Number(concreteState?.maxPizzas || templateSlot.maxPizzas || 0);
       const remainingCapacity = Math.max(0, maxPizzas - currentPizzas);
 
       return {
@@ -515,6 +563,7 @@ async function getPickupAvailability(params = {}) {
         agent: templateSlot.agent || null,
       };
     })
+    .filter(Boolean)
     .filter((slot) => slot.startTime >= minStartTime)
     .sort((a, b) => {
       const startDiff = new Date(a.startTime) - new Date(b.startTime);
@@ -527,6 +576,108 @@ async function getPickupAvailability(params = {}) {
     dayOfWeek,
     quantity: requestedQuantity,
     slots,
+  };
+}
+
+async function getConcreteSlotsForService(params = {}) {
+  const requestedDate = parseIsoDate(params.date, "date");
+  const requestedDayOfWeek = parseDayOfWeek(params.dayOfWeek, "dayOfWeek");
+  const actualDayOfWeek = getDayOfWeekKey(requestedDate);
+
+  if (requestedDayOfWeek !== actualDayOfWeek) {
+    throw new Error("Selected date must match the selected day");
+  }
+
+  const locationId = parsePositiveInt(params.locationId, "locationId");
+  if (!params.startTime) throw new Error("startTime is required");
+  if (!params.endTime) throw new Error("endTime is required");
+
+  const anchorDate = getAnchorDateForDay(requestedDayOfWeek);
+  const templateRange = getDateRange(anchorDate);
+  const concreteRange = getDateRange(requestedDate);
+  const templateServiceStart = buildDateTime(anchorDate, params.startTime, "startTime");
+  const templateServiceEnd = buildDateTime(anchorDate, params.endTime, "endTime");
+
+  if (templateServiceEnd <= templateServiceStart) {
+    throw new Error("endTime must be after startTime");
+  }
+
+  const concreteServiceStart = buildDateTime(requestedDate, params.startTime, "startTime");
+  const concreteServiceEnd = buildDateTime(requestedDate, params.endTime, "endTime");
+
+  const [templateSlots, concreteSlots] = await Promise.all([
+    prisma.timeSlot.findMany({
+      where: {
+        serviceDate: {
+          gte: templateRange.start,
+          lt: templateRange.end,
+        },
+        locationId,
+        active: true,
+        startTime: {
+          gte: templateServiceStart,
+          lt: templateServiceEnd,
+        },
+      },
+      include: TIMESLOT_INCLUDE,
+      orderBy: [{ startTime: "asc" }, { id: "asc" }],
+    }),
+    prisma.timeSlot.findMany({
+      where: {
+        serviceDate: {
+          gte: concreteRange.start,
+          lt: concreteRange.end,
+        },
+        locationId,
+        startTime: {
+          gte: concreteServiceStart,
+          lt: concreteServiceEnd,
+        },
+      },
+      include: TIMESLOT_INCLUDE,
+      orderBy: [{ startTime: "asc" }, { id: "asc" }],
+    }),
+  ]);
+
+  const concreteStateByKey = buildConcreteSlotStateMap(concreteSlots);
+
+  return {
+    date: formatIsoDate(requestedDate),
+    dayOfWeek: requestedDayOfWeek,
+    locationId,
+    startTime: params.startTime,
+    endTime: params.endTime,
+    slots: templateSlots.map((templateSlot) => {
+      const pickupTime = formatTimeValue(templateSlot.startTime);
+      const slotDuration = Math.max(
+        1,
+        minutesBetween(templateSlot.startTime, templateSlot.endTime)
+      );
+      const concreteState =
+        concreteStateByKey.get(`${templateSlot.locationId}:${pickupTime}`) || null;
+      const concreteStart =
+        concreteState?.startTime || buildDateTime(requestedDate, pickupTime, "pickupTime");
+      const concreteEnd =
+        concreteState?.endTime ||
+        new Date(concreteStart.getTime() + slotDuration * 60_000);
+      const maxPizzas = Number(concreteState?.maxPizzas || templateSlot.maxPizzas || 0);
+      const currentPizzas = Number(concreteState?.currentPizzas || 0);
+
+      return {
+        slotId: concreteState?.slotId || null,
+        pickupTime,
+        startTime: concreteStart,
+        endTime: concreteEnd,
+        maxPizzas,
+        currentPizzas,
+        remainingCapacity: Math.max(0, maxPizzas - currentPizzas),
+        active: concreteState ? Boolean(concreteState.active) : true,
+        locationId: templateSlot.locationId,
+        location: templateSlot.location || null,
+        agentId: concreteState?.agentId || templateSlot.agentId || null,
+        agent: templateSlot.agent || null,
+      };
+    }),
   };
 }
 
@@ -593,6 +744,10 @@ async function findOrCreateConcreteSlotForPickup(
     orderBy: { id: "asc" },
   });
 
+  if (existingConcreteSlot && existingConcreteSlot.active === false) {
+    throw new Error("Selected pickup slot is unavailable");
+  }
+
   if (!existingConcreteSlot) {
     await dbClient.timeSlot.create({
       data: {
@@ -618,6 +773,11 @@ async function findOrCreateConcreteSlotForPickup(
   }
 
   const primarySlot = allMatchingSlots[0];
+
+  if (primarySlot.active === false) {
+    throw new Error("Selected pickup slot is unavailable");
+  }
+
   const deletableDuplicateIds = allMatchingSlots
     .slice(1)
     .filter((slot) => Number(slot.currentPizzas || 0) === 0)
@@ -630,6 +790,116 @@ async function findOrCreateConcreteSlotForPickup(
   }
 
   return primarySlot;
+}
+
+async function updateConcreteSlotActiveState(payload = {}) {
+  const pickupDate = parseIsoDate(payload.date, "date");
+  const locationId = parsePositiveInt(payload.locationId, "locationId");
+  const active = parseOptionalBoolean(payload.active, "active");
+
+  if (active === undefined) {
+    throw new Error("active is required");
+  }
+
+  if (!payload.pickupTime) {
+    throw new Error("pickupTime is required");
+  }
+
+  const templateSlot = await getTemplateSlotForPickupSelection(prisma, {
+    pickupDate,
+    pickupTime: payload.pickupTime,
+    locationId,
+  });
+
+  if (!templateSlot) {
+    throw new Error("Selected pickup slot is not available");
+  }
+
+  const concreteRange = getDateRange(pickupDate);
+  const concreteStartTime = buildDateTime(pickupDate, payload.pickupTime, "pickupTime");
+  const slotDuration = Math.max(
+    1,
+    minutesBetween(templateSlot.startTime, templateSlot.endTime)
+  );
+  const concreteEndTime = new Date(concreteStartTime.getTime() + slotDuration * 60_000);
+
+  const matchingSlots = await prisma.timeSlot.findMany({
+    where: {
+      serviceDate: {
+        gte: concreteRange.start,
+        lt: concreteRange.end,
+      },
+      locationId,
+      startTime: concreteStartTime,
+    },
+    orderBy: { id: "asc" },
+  });
+
+  const reservedCount = matchingSlots.reduce(
+    (sum, slot) => sum + Number(slot.currentPizzas || 0),
+    0
+  );
+
+  if (!active && reservedCount > 0) {
+    throw new Error("Impossible de desactiver un creneau deja reserve");
+  }
+
+  let primarySlot = matchingSlots[0] || null;
+
+  if (primarySlot) {
+    primarySlot = await prisma.timeSlot.update({
+      where: { id: primarySlot.id },
+      data: {
+        active,
+        endTime: concreteEndTime,
+        maxPizzas: templateSlot.maxPizzas,
+        agentId: templateSlot.agentId || null,
+      },
+      include: TIMESLOT_INCLUDE,
+    });
+  } else {
+    primarySlot = await prisma.timeSlot.create({
+      data: {
+        startTime: concreteStartTime,
+        endTime: concreteEndTime,
+        maxPizzas: templateSlot.maxPizzas,
+        currentPizzas: 0,
+        active,
+        serviceDate: concreteRange.start,
+        locationId,
+        agentId: templateSlot.agentId || null,
+      },
+      include: TIMESLOT_INCLUDE,
+    });
+  }
+
+  const deletableDuplicateIds = matchingSlots
+    .slice(1)
+    .filter((slot) => Number(slot.currentPizzas || 0) === 0)
+    .map((slot) => slot.id);
+
+  if (deletableDuplicateIds.length > 0) {
+    await prisma.timeSlot.deleteMany({
+      where: {
+        id: {
+          in: deletableDuplicateIds,
+        },
+      },
+    });
+  }
+
+  return {
+    slotId: primarySlot.id,
+    date: formatIsoDate(pickupDate),
+    pickupTime: formatTimeValue(primarySlot.startTime),
+    active: Boolean(primarySlot.active),
+    currentPizzas: Number(primarySlot.currentPizzas || 0),
+    maxPizzas: Number(primarySlot.maxPizzas || 0),
+    locationId: primarySlot.locationId,
+    location: primarySlot.location || null,
+    agentId: primarySlot.agentId || null,
+    agent: primarySlot.agent || null,
+  };
 }
 
 async function listTruckClosures() {
@@ -708,8 +978,10 @@ module.exports = {
   upsertWeeklySetting,
   removeWeeklyService,
   getPickupAvailability,
+  getConcreteSlotsForService,
   getTemplateSlotForPickupSelection,
   findOrCreateConcreteSlotForPickup,
+  updateConcreteSlotActiveState,
   listTruckClosures,
   createTruckClosure,
   deleteTruckClosure,

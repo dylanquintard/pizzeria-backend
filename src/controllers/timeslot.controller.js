@@ -68,6 +68,34 @@ async function getPickupAvailability(req, res) {
   }
 }
 
+async function getConcreteSlotsForService(req, res) {
+  try {
+    const slots = await timeSlotService.getConcreteSlotsForService(req.query);
+    res.json(slots);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+async function updateConcreteSlotActiveState(req, res) {
+  try {
+    const slot = await timeSlotService.updateConcreteSlotActiveState(req.body || {});
+
+    emitRealtimeEvent("timeslots:updated", {
+      type: "timeslot-concrete-slot-updated",
+      slotId: slot?.slotId || null,
+      locationId: slot?.locationId || null,
+      pickupTime: slot?.pickupTime || null,
+      date: slot?.date || null,
+      active: Boolean(slot?.active),
+    });
+
+    res.json(slot);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 async function listTruckClosures(_req, res) {
   try {
     const closures = await timeSlotService.listTruckClosures();
@@ -114,6 +142,8 @@ module.exports = {
   upsertWeeklySetting,
   removeWeeklyService,
   getPickupAvailability,
+  getConcreteSlotsForService,
+  updateConcreteSlotActiveState,
   listTruckClosures,
   createTruckClosure,
   deleteTruckClosure,

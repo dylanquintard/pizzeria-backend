@@ -11,6 +11,12 @@ router.get(
   adminMiddleware,
   timeSlotController.getWeeklySettings
 );
+router.get(
+  "/concrete-slots",
+  authMiddleware,
+  adminMiddleware,
+  timeSlotController.getConcreteSlotsForService
+);
 router.put(
   "/weekly-settings/:dayOfWeek",
   authMiddleware,
@@ -40,6 +46,12 @@ router.delete(
   authMiddleware,
   adminMiddleware,
   timeSlotController.deleteTruckClosure
+);
+router.patch(
+  "/concrete-slots/active",
+  authMiddleware,
+  adminMiddleware,
+  timeSlotController.updateConcreteSlotActiveState
 );
 
 router.get("/availability", authMiddleware, timeSlotController.getPickupAvailability);
