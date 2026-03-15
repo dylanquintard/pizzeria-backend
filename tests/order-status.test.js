@@ -18,6 +18,12 @@ test("FINALIZED can transition to VALIDATE", () => {
   );
 });
 
+test("COMPLETED can transition directly to VALIDATE", () => {
+  assert.doesNotThrow(() =>
+    assertAllowedTransition(OrderStatus.COMPLETED, OrderStatus.VALIDATE)
+  );
+});
+
 test("VALIDATE cannot transition back to FINALIZED", () => {
   assert.throws(
     () => assertAllowedTransition(OrderStatus.VALIDATE, OrderStatus.FINALIZED),
