@@ -23,6 +23,12 @@ router.put(
   adminMiddleware,
   productController.updateIngredient
 );
+router.patch(
+  "/ingredients/:id/activate",
+  authMiddleware,
+  adminMiddleware,
+  productController.activateIngredient
+);
 
 router.post(
   "/ingredients/link",

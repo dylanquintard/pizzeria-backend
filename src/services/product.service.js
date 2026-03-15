@@ -247,11 +247,13 @@ async function deleteProduct(id) {
 async function getAllIngredients(filters = {}) {
   const categoryId = parseNullablePositiveInt(filters.categoryId, "categoryId");
   const isExtra = parseOptionalBoolean(filters.isExtra, "isExtra");
+  const active = parseOptionalBoolean(filters.active, "active");
 
   return prisma.ingredient.findMany({
     where: {
       categoryId: categoryId === undefined ? undefined : categoryId,
       isExtra: isExtra === undefined ? undefined : isExtra,
+      active: active === undefined ? undefined : active,
     },
     include: {
       category: true,
@@ -274,6 +276,9 @@ async function createIngredient(data) {
       name,
       price: parseDecimal(data.price, "price"),
       isExtra: data.isExtra === undefined ? true : Boolean(data.isExtra),
+      isBaseIngredient:
+        data.isBaseIngredient === undefined ? false : Boolean(data.isBaseIngredient),
+      active: data.active === undefined ? true : Boolean(data.active),
       categoryId,
     },
     include: {
@@ -299,6 +304,9 @@ async function updateIngredient(id, data) {
       name: typeof data.name === "string" ? data.name.trim() : undefined,
       price: data.price !== undefined ? parseDecimal(data.price, "price") : undefined,
       isExtra: typeof data.isExtra === "boolean" ? data.isExtra : undefined,
+      isBaseIngredient:
+        typeof data.isBaseIngredient === "boolean" ? data.isBaseIngredient : undefined,
+      active: typeof data.active === "boolean" ? data.active : undefined,
       categoryId,
     },
     include: {
@@ -316,6 +324,17 @@ async function deleteIngredient(id) {
   ]);
 
   return true;
+}
+
+async function activateIngredient(id, active) {
+  const ingredientId = parsePositiveInt(id, "id");
+  return prisma.ingredient.update({
+    where: { id: ingredientId },
+    data: { active: parseOptionalBoolean(active, "active") ?? false },
+    include: {
+      category: true,
+    },
+  });
 }
 
 async function addIngredientToProduct(productId, ingredientId, data = {}) {
@@ -380,6 +399,7 @@ module.exports = {
   createIngredient,
   updateIngredient,
   deleteIngredient,
+  activateIngredient,
   addIngredientToProduct,
   updateIngredientLinkOnProduct,
   removeIngredientFromProduct,

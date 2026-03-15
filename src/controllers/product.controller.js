@@ -81,6 +81,18 @@ async function deleteIngredient(req, res) {
   }
 }
 
+async function activateIngredient(req, res) {
+  try {
+    const ingredient = await productService.activateIngredient(
+      req.params.id,
+      req.body.active
+    );
+    res.json(ingredient);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 async function addIngredientToProduct(req, res) {
   try {
     const { productId, ingredientId, isBase } = req.body || {};
@@ -125,6 +137,7 @@ module.exports = {
   createIngredient,
   updateIngredient,
   deleteIngredient,
+  activateIngredient,
   addIngredientToProduct,
   updateIngredientLinkOnProduct,
   removeIngredientFromProduct,

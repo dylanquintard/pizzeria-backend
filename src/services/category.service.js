@@ -90,10 +90,7 @@ async function createCategory(data) {
           : null,
       sortOrder: parseSortOrder(data.sortOrder) ?? 0,
       active: parseOptionalBoolean(data.active) ?? true,
-      customerCanCustomize:
-        kind === CATEGORY_KINDS.PRODUCT
-          ? parseOptionalBoolean(data.customerCanCustomize, "customerCanCustomize") ?? false
-          : false,
+      customerCanCustomize: false,
     },
   });
 }

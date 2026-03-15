@@ -65,6 +65,8 @@ model Ingredient {
   name       String
   price      Decimal             @db.Decimal(10, 2)
   isExtra    Boolean             @default(true)
+  isBaseIngredient Boolean       @default(false)
+  active     Boolean             @default(true)
   categoryId Int?
   category   Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   products   ProductIngredient[]
