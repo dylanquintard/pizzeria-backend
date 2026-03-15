@@ -7,7 +7,11 @@ const SLOT_RESERVED_STATUSES = new Set([
 ]);
 
 const ORDER_STATUS_TRANSITIONS = {
-  [OrderStatus.PENDING]: new Set([OrderStatus.COMPLETED, OrderStatus.CANCELED]),
+  [OrderStatus.PENDING]: new Set([
+    OrderStatus.COMPLETED,
+    OrderStatus.VALIDATE,
+    OrderStatus.CANCELED,
+  ]),
   [OrderStatus.COMPLETED]: new Set([
     OrderStatus.FINALIZED,
     OrderStatus.VALIDATE,
