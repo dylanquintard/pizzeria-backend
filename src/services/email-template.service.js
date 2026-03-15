@@ -27,7 +27,7 @@ async function getEmailBranding() {
   return {
     siteName: String(siteSettings?.siteName || "").trim() || DEFAULT_SITE_NAME,
     headerLogoUrl: String(siteSettings?.seo?.headerLogoUrl || "").trim(),
-    siteUrl: String(FRONTEND_SITE_URL || "").trim() || "https://eazytoolz.site",
+    siteUrl: String(FRONTEND_SITE_URL || "").trim() || "https://example.invalid",
   };
 }
 

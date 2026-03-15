@@ -2,27 +2,29 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const {
+  NODE_ENV,
   CORS_ORIGINS,
   PORT,
   TRUST_PROXY,
   ENABLE_HSTS,
   HSTS_MAX_AGE,
   UPLOAD_DIR,
+  GOOGLE_SITE_VERIFICATION_FILE,
+  GOOGLE_SITE_VERIFICATION_CONTENT,
 } = require("./lib/env");
+const { normalizeOrigin, isDevLocalOrigin } = require("./lib/origin");
 const { createOriginGuard } = require("./middlewares/csrf");
 
 const app = express();
 app.disable("x-powered-by");
 if (TRUST_PROXY) app.set("trust proxy", 1);
 
-const GOOGLE_SITE_VERIFICATION_FILE = "googlef435f264d8416a8b.html";
-const GOOGLE_SITE_VERIFICATION_CONTENT =
-  "google-site-verification: googlef435f264d8416a8b.html";
-
-const normalizeOrigin = (origin) => String(origin || "").trim().replace(/\/+$/, "");
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
-  return CORS_ORIGINS.includes(normalizeOrigin(origin));
+  const normalized = normalizeOrigin(origin);
+  if (CORS_ORIGINS.includes(normalized)) return true;
+  if (NODE_ENV !== "production" && isDevLocalOrigin(normalized)) return true;
+  return false;
 };
 
 const corsOptions = {
@@ -94,23 +96,73 @@ app.use("/api/realtime", realtimeRoutes);
 app.use("/api/print", printRoutes);
 app.use("/api/seo", seoRoutes);
 app.get("/sitemap.xml", seoController.getSitemapXml);
-app.get(`/${GOOGLE_SITE_VERIFICATION_FILE}`, (_req, res) => {
-  res.type("text/plain; charset=utf-8").send(GOOGLE_SITE_VERIFICATION_CONTENT);
-});
+if (GOOGLE_SITE_VERIFICATION_FILE && GOOGLE_SITE_VERIFICATION_CONTENT) {
+  app.get(`/${GOOGLE_SITE_VERIFICATION_FILE}`, (_req, res) => {
+    res.type("text/plain; charset=utf-8").send(GOOGLE_SITE_VERIFICATION_CONTENT);
+  });
+}
 
 app.get("/", (_req, res) => {
   res.send("API Pizzeria running");
 });
 
-app.listen(PORT, () => {
-  startPrintScheduler();
-  console.log(`Server running on port ${PORT}`);
-});
+let server = null;
+let shuttingDown = false;
 
-process.on("SIGTERM", () => {
-  stopPrintScheduler();
-});
+function startServer() {
+  server = app.listen(PORT, () => {
+    startPrintScheduler();
+    console.log(`Server running on port ${PORT}`);
+  });
+  return server;
+}
 
-process.on("SIGINT", () => {
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  const timeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS || 10000);
+  console.log(`[shutdown] Received ${signal}, stopping backend gracefully...`);
   stopPrintScheduler();
-});
+
+  if (!server) {
+    process.exit(0);
+    return;
+  }
+
+  const forceTimer = setTimeout(() => {
+    console.error(`[shutdown] Forced exit after ${timeoutMs}ms`);
+    process.exit(1);
+  }, timeoutMs);
+  if (typeof forceTimer.unref === "function") {
+    forceTimer.unref();
+  }
+
+  server.close((error) => {
+    clearTimeout(forceTimer);
+    if (error) {
+      console.error("[shutdown] Error while closing server:", error);
+      process.exit(1);
+      return;
+    }
+    process.exit(0);
+  });
+}
+
+if (require.main === module) {
+  startServer();
+
+  process.on("SIGTERM", () => {
+    shutdown("SIGTERM");
+  });
+
+  process.on("SIGINT", () => {
+    shutdown("SIGINT");
+  });
+}
+
+module.exports = {
+  app,
+  startServer,
+  shutdown,
+};

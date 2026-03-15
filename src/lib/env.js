@@ -76,6 +76,13 @@ function parseOptionalString(value) {
   return String(value).trim();
 }
 
+function parseOptionalOriginList(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => normalizeOrigin(item))
+    .filter(Boolean);
+}
+
 function assertJwtSecretStrength(secret) {
   if (secret.length < 32) {
     throw new Error("JWT_SECRET must be at least 32 characters");
@@ -175,22 +182,33 @@ if (PRINT_READY_FAIL_AFTER_MINUTES < PRINT_READY_ALERT_AFTER_MINUTES) {
 if (AUTH_COOKIE_SAMESITE === "none" && !AUTH_COOKIE_SECURE) {
   throw new Error("AUTH_COOKIE_SECURE must be true when AUTH_COOKIE_SAMESITE is 'none'");
 }
-const CORS_ORIGINS = (
-  process.env.CORS_ORIGIN ||
-  "https://eazytoolz.site,https://www.eazytoolz.site"
-)
-  .split(",")
-  .map((item) => normalizeOrigin(item))
-  .filter(Boolean);
+const CORS_ORIGINS = parseOptionalOriginList(
+  process.env.CORS_ORIGIN || process.env.CORS_ORIGINS
+);
+
+if (NODE_ENV === "production" && CORS_ORIGINS.length === 0) {
+  throw new Error("CORS_ORIGINS is required in production");
+}
 
 const FRONTEND_SITE_URL = parseOptionalHttpUrl(
-  process.env.FRONTEND_SITE_URL || "https://eazytoolz.site",
+  process.env.FRONTEND_SITE_URL,
   "FRONTEND_SITE_URL"
 );
+if (NODE_ENV === "production" && !FRONTEND_SITE_URL) {
+  throw new Error("FRONTEND_SITE_URL is required in production");
+}
 const WEB_PUSH_VAPID_PUBLIC_KEY = parseOptionalString(process.env.WEB_PUSH_VAPID_PUBLIC_KEY);
 const WEB_PUSH_VAPID_PRIVATE_KEY = parseOptionalString(process.env.WEB_PUSH_VAPID_PRIVATE_KEY);
 const WEB_PUSH_SUBJECT =
-  parseOptionalString(process.env.WEB_PUSH_SUBJECT) || "mailto:admin@eazytoolz.site";
+  parseOptionalString(process.env.WEB_PUSH_SUBJECT) || "mailto:admin@example.invalid";
+const GOOGLE_SITE_VERIFICATION_FILE = parseOptionalString(
+  process.env.GOOGLE_SITE_VERIFICATION_FILE
+);
+const GOOGLE_SITE_VERIFICATION_CONTENT =
+  parseOptionalString(process.env.GOOGLE_SITE_VERIFICATION_CONTENT) ||
+  (GOOGLE_SITE_VERIFICATION_FILE
+    ? `google-site-verification: ${GOOGLE_SITE_VERIFICATION_FILE}`
+    : "");
 
 if (Boolean(WEB_PUSH_VAPID_PUBLIC_KEY) !== Boolean(WEB_PUSH_VAPID_PRIVATE_KEY)) {
   throw new Error(
@@ -236,5 +254,7 @@ module.exports = {
   WEB_PUSH_VAPID_PUBLIC_KEY,
   WEB_PUSH_VAPID_PRIVATE_KEY,
   WEB_PUSH_SUBJECT,
+  GOOGLE_SITE_VERIFICATION_FILE,
+  GOOGLE_SITE_VERIFICATION_CONTENT,
   SITEMAP_CACHE_SECONDS,
 };
