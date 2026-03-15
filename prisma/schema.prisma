@@ -76,6 +76,7 @@ model ProductIngredient {
   id           Int        @id @default(autoincrement())
   productId    Int        @map("pizzaId")
   ingredientId Int
+  isBase       Boolean    @default(false)
   product      Product    @relation(fields: [productId], references: [id])
   ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
 

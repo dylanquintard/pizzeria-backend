@@ -489,6 +489,86 @@ async function getCartByUserId(userId) {
   return formatSingleOrder(cart);
 }
 
+function getIngredientCategoryKey(ingredient) {
+  return String(ingredient?.categoryId ?? "uncategorized");
+}
+
+async function validateCartCustomizations(tx, productId, normalizedCustomizations) {
+  const product = await tx.product.findUnique({
+    where: { id: productId },
+    include: {
+      ingredients: {
+        include: {
+          ingredient: true,
+        },
+      },
+    },
+  });
+
+  if (!product) throw new Error("Product not found");
+
+  const linkedIngredients = Array.isArray(product.ingredients) ? product.ingredients : [];
+  const linkedIngredientIds = new Set(
+    linkedIngredients.map((entry) => Number(entry.ingredientId)).filter(Number.isInteger)
+  );
+
+  const invalidRemovedIds = normalizedCustomizations.removedIngredients.filter(
+    (id) => !linkedIngredientIds.has(Number(id))
+  );
+  if (invalidRemovedIds.length > 0) {
+    throw new Error("Invalid removed ingredient");
+  }
+
+  if (normalizedCustomizations.addedIngredients.length === 0) {
+    return {
+      product,
+      extrasTotal: 0,
+    };
+  }
+
+  const addedIngredients = await tx.ingredient.findMany({
+    where: { id: { in: normalizedCustomizations.addedIngredients } },
+  });
+
+  if (addedIngredients.length !== normalizedCustomizations.addedIngredients.length) {
+    throw new Error("Invalid added ingredient");
+  }
+
+  const removedBaseIngredientsByCategory = new Map();
+  linkedIngredients
+    .filter(
+      (entry) =>
+        entry.isBase && normalizedCustomizations.removedIngredients.includes(entry.ingredientId)
+    )
+    .forEach((entry) => {
+      const key = getIngredientCategoryKey(entry.ingredient);
+      if (!removedBaseIngredientsByCategory.has(key)) {
+        removedBaseIngredientsByCategory.set(key, []);
+      }
+      removedBaseIngredientsByCategory.get(key).push(entry.ingredientId);
+    });
+
+  let extrasTotal = 0;
+
+  for (const ingredient of addedIngredients) {
+    if (ingredient.isExtra) {
+      extrasTotal += Number(ingredient.price);
+      continue;
+    }
+
+    const categoryKey = getIngredientCategoryKey(ingredient);
+    const removedCandidates = removedBaseIngredientsByCategory.get(categoryKey) || [];
+    if (removedCandidates.length === 0) {
+      throw new Error("Invalid base ingredient replacement");
+    }
+  }
+
+  return {
+    product,
+    extrasTotal,
+  };
+}
+
 async function addToCart(userId, productId, quantity, customizations = {}) {
   const parsedUserId = parsePositiveInt(userId, "userId");
   const parsedProductId = parsePositiveInt(productId, "productId");
@@ -496,26 +576,13 @@ async function addToCart(userId, productId, quantity, customizations = {}) {
   const normalizedCustomizations = normalizeCustomizations(customizations);
 
   const updatedOrder = await prisma.$transaction(async (tx) => {
-    const product = await tx.product.findUnique({ where: { id: parsedProductId } });
-    if (!product) throw new Error("Product not found");
+    const { product, extrasTotal } = await validateCartCustomizations(
+      tx,
+      parsedProductId,
+      normalizedCustomizations
+    );
 
     const cart = await findOrCreatePendingCart(tx, parsedUserId);
-
-    let extrasTotal = 0;
-    if (normalizedCustomizations.addedIngredients.length > 0) {
-      const extras = await tx.ingredient.findMany({
-        where: {
-          id: { in: normalizedCustomizations.addedIngredients },
-          isExtra: true,
-        },
-      });
-
-      if (extras.length !== normalizedCustomizations.addedIngredients.length) {
-        throw new Error("Invalid extra ingredient");
-      }
-
-      extrasTotal = extras.reduce((sum, ingredient) => sum + Number(ingredient.price), 0);
-    }
 
     const unitPrice = Number(product.basePrice) + extrasTotal;
 

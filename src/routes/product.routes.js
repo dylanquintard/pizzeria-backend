@@ -30,6 +30,12 @@ router.post(
   adminMiddleware,
   productController.addIngredientToProduct
 );
+router.patch(
+  "/ingredients/link",
+  authMiddleware,
+  adminMiddleware,
+  productController.updateIngredientLinkOnProduct
+);
 router.delete(
   "/ingredients/link",
   authMiddleware,

@@ -37,6 +37,11 @@ function parseOptionalBoolean(value, fieldName) {
   throw new Error(`${fieldName} must be a boolean`);
 }
 
+function parseBooleanWithDefault(value, defaultValue = false) {
+  const parsed = parseOptionalBoolean(value, "value");
+  return parsed === undefined ? defaultValue : parsed;
+}
+
 function toIsoPlusDays(days) {
   const date = new Date();
   date.setDate(date.getDate() + days);
@@ -313,7 +318,7 @@ async function deleteIngredient(id) {
   return true;
 }
 
-async function addIngredientToProduct(productId, ingredientId) {
+async function addIngredientToProduct(productId, ingredientId, data = {}) {
   const parsedProductId = parsePositiveInt(productId, "productId");
   const parsedIngredientId = parsePositiveInt(ingredientId, "ingredientId");
 
@@ -325,6 +330,7 @@ async function addIngredientToProduct(productId, ingredientId) {
       data: {
         productId: parsedProductId,
         ingredientId: parsedIngredientId,
+        isBase: parseBooleanWithDefault(data.isBase, false),
       },
     });
   } catch (err) {
@@ -333,6 +339,23 @@ async function addIngredientToProduct(productId, ingredientId) {
     }
     throw err;
   }
+}
+
+async function updateIngredientLinkOnProduct(productId, ingredientId, data = {}) {
+  const parsedProductId = parsePositiveInt(productId, "productId");
+  const parsedIngredientId = parsePositiveInt(ingredientId, "ingredientId");
+
+  return prisma.productIngredient.update({
+    where: {
+      productId_ingredientId: {
+        productId: parsedProductId,
+        ingredientId: parsedIngredientId,
+      },
+    },
+    data: {
+      isBase: parseBooleanWithDefault(data.isBase, false),
+    },
+  });
 }
 
 async function removeIngredientFromProduct(productId, ingredientId) {
@@ -358,5 +381,6 @@ module.exports = {
   updateIngredient,
   deleteIngredient,
   addIngredientToProduct,
+  updateIngredientLinkOnProduct,
   removeIngredientFromProduct,
 };

@@ -1,0 +1,2 @@
+ALTER TABLE "PizzaIngredient"
+ADD COLUMN "isBase" BOOLEAN NOT NULL DEFAULT false;

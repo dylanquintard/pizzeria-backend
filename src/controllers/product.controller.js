@@ -83,9 +83,23 @@ async function deleteIngredient(req, res) {
 
 async function addIngredientToProduct(req, res) {
   try {
-    const { productId, ingredientId } = req.body || {};
-    const link = await productService.addIngredientToProduct(productId, ingredientId);
+    const { productId, ingredientId, isBase } = req.body || {};
+    const link = await productService.addIngredientToProduct(productId, ingredientId, {
+      isBase,
+    });
     res.status(201).json(link);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+async function updateIngredientLinkOnProduct(req, res) {
+  try {
+    const { productId, ingredientId, isBase } = req.body || {};
+    const link = await productService.updateIngredientLinkOnProduct(productId, ingredientId, {
+      isBase,
+    });
+    res.json(link);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -112,5 +126,6 @@ module.exports = {
   updateIngredient,
   deleteIngredient,
   addIngredientToProduct,
+  updateIngredientLinkOnProduct,
   removeIngredientFromProduct,
 };
