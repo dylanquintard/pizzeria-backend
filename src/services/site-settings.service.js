@@ -441,6 +441,21 @@ async function translateFrenchTextToEnglish(value) {
   return translated.trim() || text;
 }
 
+async function translateFrenchMultilineTextToEnglish(value) {
+  const lines = String(value || "")
+    .split(/\r?\n/)
+    .map((entry) => entry.trim());
+
+  const translatedLines = await Promise.all(
+    lines.map(async (line) => {
+      if (!line) return "";
+      return translateFrenchTextToEnglish(line);
+    })
+  );
+
+  return translatedLines.join("\n").trim();
+}
+
 async function getSiteSettingsRecord() {
   return prisma.siteSetting.findUnique({
     where: { id: SITE_SETTINGS_SINGLETON_ID },
@@ -806,8 +821,11 @@ async function translateSiteSettingsToEnglish(payload) {
       const localizedValue = getNestedValue(source, path);
       const frenchText = String(localizedValue?.fr || "").trim();
       const currentEnglishText = String(localizedValue?.en || "").trim();
+      const pathKey = path.join(".");
       const englishText = frenchText
-        ? await translateFrenchTextToEnglish(frenchText)
+        ? pathKey === "home.highlightedIngredients"
+          ? await translateFrenchMultilineTextToEnglish(frenchText)
+          : await translateFrenchTextToEnglish(frenchText)
         : currentEnglishText;
 
       setNestedValue(translated, path, {
