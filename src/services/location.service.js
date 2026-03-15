@@ -59,13 +59,14 @@ async function getLocationById(id) {
 }
 
 async function createLocation(data) {
+  const city = parseRequiredString(data.city, "city");
   return prisma.location.create({
     data: {
-      name: parseRequiredString(data.name, "name"),
+      name: city,
       addressLine1: parseRequiredString(data.addressLine1, "addressLine1"),
       addressLine2: parseOptionalString(data.addressLine2),
       postalCode: parseRequiredString(data.postalCode, "postalCode"),
-      city: parseRequiredString(data.city, "city"),
+      city,
       country:
         typeof data.country === "string" && data.country.trim()
           ? data.country.trim()
@@ -83,11 +84,13 @@ async function updateLocation(id, data) {
   const existing = await prisma.location.findUnique({ where: { id: locationId } });
   if (!existing) throw new Error("Location not found");
 
+  const nextCity =
+    data.city === undefined ? existing.city : parseRequiredString(data.city, "city");
+
   return prisma.location.update({
     where: { id: locationId },
     data: {
-      name:
-        data.name === undefined ? undefined : parseRequiredString(data.name, "name"),
+      name: nextCity,
       addressLine1:
         data.addressLine1 === undefined
           ? undefined
@@ -97,7 +100,7 @@ async function updateLocation(id, data) {
         data.postalCode === undefined
           ? undefined
           : parseRequiredString(data.postalCode, "postalCode"),
-      city: data.city === undefined ? undefined : parseRequiredString(data.city, "city"),
+      city: nextCity,
       country:
         data.country === undefined
           ? undefined
