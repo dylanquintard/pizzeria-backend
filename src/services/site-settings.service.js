@@ -62,6 +62,24 @@ const DEFAULT_SITE_SETTINGS = Object.freeze({
       fr: "Commande en ligne, retrait rapide, cuisson minute",
       en: "Online ordering, quick pickup, baked to order",
     },
+    highlightedIngredients: {
+      fr: [
+        "farine Nuvola Super",
+        "tomates San Marzano",
+        "mozzarella fior di latte",
+        "parmigiano reggiano",
+        "jambon de Parme",
+        "prosciutto italien",
+      ].join("\n"),
+      en: [
+        "Nuvola Super flour",
+        "San Marzano tomatoes",
+        "fior di latte mozzarella",
+        "Parmigiano Reggiano",
+        "Parma ham",
+        "Italian prosciutto",
+      ].join("\n"),
+    },
   },
   blog: {
     introTitle: {
@@ -133,6 +151,7 @@ const LOCALIZED_TRANSLATION_PATHS = [
   ["home", "primaryCtaLabel"],
   ["home", "secondaryCtaLabel"],
   ["home", "reassuranceText"],
+  ["home", "highlightedIngredients"],
   ["blog", "introTitle"],
   ["blog", "introText"],
   ["contactPage", "pageTitle"],
@@ -271,6 +290,11 @@ function formatSiteSettingsRecord(record) {
         defaults.home.reassuranceText,
         source.home?.reassuranceText || {},
         "home.reassuranceText"
+      ),
+      highlightedIngredients: mergeLocalizedValue(
+        defaults.home.highlightedIngredients,
+        source.home?.highlightedIngredients || {},
+        "home.highlightedIngredients"
       ),
     },
     blog: {
@@ -605,6 +629,14 @@ async function updateSiteSettings(payload) {
                     "home.reassuranceText"
                   )
                 : current.home.reassuranceText,
+            highlightedIngredients:
+              ensureObject(source.home, "home").highlightedIngredients !== undefined
+                ? mergeLocalizedValue(
+                    current.home.highlightedIngredients,
+                    ensureObject(source.home, "home").highlightedIngredients,
+                    "home.highlightedIngredients"
+                  )
+                : current.home.highlightedIngredients,
           }
         : current.home,
     blog:
