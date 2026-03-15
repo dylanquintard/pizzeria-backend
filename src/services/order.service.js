@@ -493,6 +493,53 @@ function getIngredientCategoryKey(ingredient) {
   return String(ingredient?.categoryId ?? "uncategorized");
 }
 
+function buildRemovedBaseIngredientsByCategory(linkedIngredients, removedIngredientIds) {
+  const removedBaseIngredientsByCategory = new Map();
+
+  (Array.isArray(linkedIngredients) ? linkedIngredients : [])
+    .filter(
+      (entry) =>
+        (entry.isBase || entry.ingredient?.isBaseIngredient) &&
+        removedIngredientIds.includes(entry.ingredientId)
+    )
+    .forEach((entry) => {
+      const key = getIngredientCategoryKey(entry.ingredient);
+      if (!removedBaseIngredientsByCategory.has(key)) {
+        removedBaseIngredientsByCategory.set(key, []);
+      }
+      removedBaseIngredientsByCategory.get(key).push(entry.ingredientId);
+    });
+
+  return removedBaseIngredientsByCategory;
+}
+
+function calculateCustomizationExtrasTotal(addedIngredients, removedBaseIngredientsByCategory) {
+  let extrasTotal = 0;
+
+  for (const ingredient of addedIngredients) {
+    const categoryKey = getIngredientCategoryKey(ingredient);
+    const removedCandidates = removedBaseIngredientsByCategory.get(categoryKey) || [];
+
+    // A base replacement should not add any extra cost, even if the ingredient
+    // is also flagged as an extra in admin data.
+    if (ingredient?.isBaseIngredient && removedCandidates.length > 0) {
+      removedCandidates.shift();
+      continue;
+    }
+
+    if (ingredient.isExtra) {
+      extrasTotal += Number(ingredient.price);
+      continue;
+    }
+
+    if (removedCandidates.length === 0) {
+      throw new Error("Invalid base ingredient replacement");
+    }
+  }
+
+  return extrasTotal;
+}
+
 async function validateCartCustomizations(tx, productId, normalizedCustomizations) {
   const product = await tx.product.findUnique({
     where: { id: productId },
@@ -534,34 +581,15 @@ async function validateCartCustomizations(tx, productId, normalizedCustomization
     throw new Error("Invalid added ingredient");
   }
 
-  const removedBaseIngredientsByCategory = new Map();
-  linkedIngredients
-    .filter(
-      (entry) =>
-        entry.isBase && normalizedCustomizations.removedIngredients.includes(entry.ingredientId)
-    )
-    .forEach((entry) => {
-      const key = getIngredientCategoryKey(entry.ingredient);
-      if (!removedBaseIngredientsByCategory.has(key)) {
-        removedBaseIngredientsByCategory.set(key, []);
-      }
-      removedBaseIngredientsByCategory.get(key).push(entry.ingredientId);
-    });
+  const removedBaseIngredientsByCategory = buildRemovedBaseIngredientsByCategory(
+    linkedIngredients,
+    normalizedCustomizations.removedIngredients
+  );
 
-  let extrasTotal = 0;
-
-  for (const ingredient of addedIngredients) {
-    if (ingredient.isExtra) {
-      extrasTotal += Number(ingredient.price);
-      continue;
-    }
-
-    const categoryKey = getIngredientCategoryKey(ingredient);
-    const removedCandidates = removedBaseIngredientsByCategory.get(categoryKey) || [];
-    if (removedCandidates.length === 0) {
-      throw new Error("Invalid base ingredient replacement");
-    }
-  }
+  const extrasTotal = calculateCustomizationExtrasTotal(
+    addedIngredients,
+    removedBaseIngredientsByCategory
+  );
 
   return {
     product,
@@ -941,4 +969,6 @@ module.exports = {
   deleteOrder,
   getOrderConfirmationEmailData,
   getOrderValidationEmailData,
+  buildRemovedBaseIngredientsByCategory,
+  calculateCustomizationExtrasTotal,
 };
