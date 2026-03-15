@@ -22,12 +22,12 @@ function parseSortOrder(value) {
   return parsed;
 }
 
-function parseOptionalBoolean(value) {
+function parseOptionalBoolean(value, fieldName = "active") {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value === "boolean") return value;
   if (value === "true") return true;
   if (value === "false") return false;
-  throw new Error("active must be a boolean");
+  throw new Error(`${fieldName} must be a boolean`);
 }
 
 function parseCategoryKind(value, { required = false } = {}) {
@@ -90,6 +90,10 @@ async function createCategory(data) {
           : null,
       sortOrder: parseSortOrder(data.sortOrder) ?? 0,
       active: parseOptionalBoolean(data.active) ?? true,
+      customerCanCustomize:
+        kind === CATEGORY_KINDS.PRODUCT
+          ? parseOptionalBoolean(data.customerCanCustomize, "customerCanCustomize") ?? false
+          : false,
     },
   });
 }
@@ -114,6 +118,10 @@ async function updateCategory(id, data) {
             : null,
       sortOrder: parseSortOrder(data.sortOrder),
       active: parseOptionalBoolean(data.active),
+      customerCanCustomize:
+        existing.kind === CATEGORY_KINDS.PRODUCT || nextKind === CATEGORY_KINDS.PRODUCT
+          ? parseOptionalBoolean(data.customerCanCustomize, "customerCanCustomize")
+          : false,
     },
   });
 }
